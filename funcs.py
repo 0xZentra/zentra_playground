@@ -489,7 +489,9 @@ def _addr_recover(msg, signature_hex):
     if not signature_hex.startswith('0x'):
         signature_hex = '0x' + signature_hex
     msg_hash = _message_hash(msg)
-    msg_hash_hex = '0x' + msg_hash.hex()
+    msg_hash_hex = msg_hash.hex()
+    if not msg_hash_hex.startswith('0x'):
+        msg_hash_hex = '0x' + msg_hash_hex
     public_key_hex = _ecdsa_recover(msg_hash_hex, signature_hex)
     if not public_key_hex:
         return False
@@ -586,7 +588,9 @@ def privacy_deposit(info, args):
 
     # transaction_id, _privacy_tick_owner = get(privacy_tick, 'tx_count', 0, addr)
     stored_nonce, _ = get(privacy_tick,'privacy_nonce', 0, sender)
+    # print(nonce, stored_nonce)
     assert nonce == stored_nonce + 1
+    put(sender, privacy_tick, 'privacy_nonce', nonce, sender)
 
     provider_addr, _ = get(privacy_tick, 'privacy_provider', None)
     msg_to_sign = f'{privacy_tick},privacy_deposit,{str(amount)},{str(amount_cipher)},{str(nonce)}'
@@ -595,12 +599,8 @@ def privacy_deposit(info, args):
     if provider_addr.lower() != recovered_addr:
         return
 
-    transaction_id, provider = get(privacy_tick, 'transaction_count', 0)
-    transaction_id += 1
-    put(provider, privacy_tick, 'transaction_count', transaction_id)
-
     total_supply, _ = get(privacy_tick, 'total_supply', 0)
-    put(provider, privacy_tick, 'total_supply', int(total_supply) + amount)
+    put(provider_addr, privacy_tick, 'total_supply', int(total_supply) + amount)
 
     balance, _ = get(tick, 'balance', 0, f'{sender}')
     assert balance >= amount
@@ -610,8 +610,7 @@ def privacy_deposit(info, args):
     balance_cipher, _ = get(privacy_tick, 'privacy_balance', 1, addr)
     balance_cipher_updated = _homomorphic_add(pub, int(balance_cipher), amount_cipher)
     put(sender, privacy_tick, 'privacy_balance', balance_cipher_updated, sender)
-    put(sender, privacy_tick, 'privacy_nonce', nonce, sender)
-    event('PrivacyDeposit', [privacy_tick, addr, amount, amount_cipher, transaction_id])
+    event('PrivacyDeposit', [privacy_tick, addr, amount, amount_cipher, nonce])
 
 
 # def privacy_enter(info, args):
@@ -692,7 +691,7 @@ def privacy_withdraw(info, args):
 
     # 签名校验
     msg = f"{privacy_tick},privacy_withdraw,{sender},{nonce},{amount},{amount_cipher},{old_balance_cipher}"
-    recovered_addr = _addr_recover(msg,signature)
+    recovered_addr = _addr_recover(msg, signature)
     assert recovered_addr == provider_addr.lower(), "Invalid signature"
 
     # 获取同态公钥
@@ -713,11 +712,7 @@ def privacy_withdraw(info, args):
     # 更新
     put(sender, privacy_tick, 'privacy_balance', new_balance_cipher, sender)
     put(sender, privacy_tick, 'privacy_nonce', nonce, sender)
-
-    transaction_id, provider = get(privacy_tick, 'transaction_count', 0)
-    transaction_id += 1
-    put(provider, privacy_tick, 'transaction_count', transaction_id)
-    put(provider, privacy_tick, 'total_supply', new_total)
+    put(provider_addr, privacy_tick, 'total_supply', new_total)
 
     event('PrivacyWithdraw', [sender, amount, new_balance_cipher, nonce])
     # event('PrivacyWithdraw', [privacy_tick, balance_cipher, amount, amount_cipher, transaction_id])

@@ -9,9 +9,12 @@ from typing import ChainMap
 space.states = [{}]
 
 def sign_message(msg, private_key):
-    encoded_msg = encode_defunct(text=msg)
+    encoded_msg = encode_defunct(primitive=keccak(text=msg))
     signed = Account.sign_message(encoded_msg, private_key)
-    return signed.signature.hex()
+    signature = signed.signature.hex()
+    if not signature.startswith('0x'):
+        signature = '0x' + signature
+    return signature
 
 def print_merged_state():
     merged_state = dict(ChainMap(*reversed(space.states)))
