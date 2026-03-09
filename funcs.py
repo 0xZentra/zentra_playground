@@ -1,65 +1,116 @@
 import string
 from inspect import currentframe, getframeinfo
 
-from space import put, get, handle_lookup
+from space import put, get, handle_lookup, event
 import space
 
-def token_mint_once(info, args): # pragma: no cover
+
+# === ZIP3 ===
+def asset_create(info, args):
+    assert args['f'] == 'asset_create'
+
     tick = args['a'][0]
     assert type(tick) is str
     assert len(tick) > 0 and len(tick) < 42
     assert tick[0] in string.ascii_uppercase
     assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
 
-    value = int(args['a'][1])
-    assert value > 0
-
-    assert args['f'] == 'token_mint_once'
-    # print(get('asset', 'functions', [], tick))
-    assert args['f'] in get('asset', 'functions', [], tick)
-
     sender = info['sender']
-    handle = handle_lookup(sender)
-    addr = handle or sender
-    total = int(args['a'][1])
-    assert get(tick, 'total', None) is None
-    put(addr, tick, 'total', total)
+    addr = handle_lookup(sender)
+    owner, _ = get('asset', 'owner', None, tick)
+    assert not owner
 
-    balance = get(tick, 'balance', 0, addr)
-    balance += value
-    put(addr, tick, 'balance', balance, addr)
+    put(addr, 'asset', 'owner', addr, tick)
+    put(addr, 'asset', 'functions', ['asset_update_ownership', 'asset_update_functions'], tick)
+    event('AssetCreated', [tick])
 
-def token_mint(info, args): # pragma: no cover
+
+def asset_update_ownership(info, args):
     tick = args['a'][0]
     assert type(tick) is str
     assert len(tick) > 0 and len(tick) < 42
     assert tick[0] in string.ascii_uppercase
     assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
 
-    assert args['f'] == 'token_mint'
-    assert args['f'] in get('asset', 'functions', [], tick)
+    assert args['f'] == 'asset_update_ownership'
+    functions, _ = get('asset', 'functions', [], tick)
+    assert args['f'] in functions
 
-    value = int(args['a'][1])
-    assert value > 0
+    receiver = args['a'][1].lower()
     sender = info['sender']
-    handle = handle_lookup(sender)
-    addr = handle or sender
+    addr = handle_lookup(sender)
+    owner, _ = get('asset', 'owner', None, tick)
+    assert owner.lower() == addr
 
-    balance = get(tick, 'balance', 0, addr)
-    balance += value
-    put(addr, tick, 'balance', balance, addr)
+    # DO THIS to change the owner using receiver's Zentra token
+    functions, _ = get('asset', 'functions', None, tick)
+    assert type(functions) is list
+    assert functions
+    put(receiver, 'asset', 'owner', receiver, tick)
+    put(receiver, 'asset', 'functions', functions, tick)
+    event('AssetOwnershipUpdated', [tick, receiver])
 
-def token_create(info, args): # pragma: no cover
+def asset_update_functions(info, args):
+    tick = args['a'][0]
+    assert type(tick) is str
+    assert len(tick) > 0 and len(tick) < 42
+    assert tick[0] in string.ascii_uppercase
+    assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
+
+    assert args['f'] == 'asset_update_functions'
+    functions, _ = get('asset', 'functions', [], tick)
+    assert args['f'] in functions
+
+    sender = info['sender']
+    addr = handle_lookup(sender)
+    owner, _ = get('asset', 'owner', None, tick)
+    assert owner == addr
+
+    functions = args['a'][1]
+    assert type(functions) is list
+    assert functions
+    put(addr, 'asset', 'functions', functions, tick)
+    event('AssetFunctionsUpdated', [tick, functions])
+
+
+def asset_batch_create(info, args):
+    assert args['f'] == 'asset_batch_create'
+
+    sender = info['sender']
+    addr = handle_lookup(sender)
+    committee_members, _ = get('committee', 'members', [])
+    committee_members = set(committee_members)
+    assert addr in committee_members
+
+    ticks = args['a'][0]
+    assert type(ticks) is list
+    for tick in ticks:
+        assert type(tick) is str
+        assert len(tick) > 0 and len(tick) < 42
+        assert tick[0] in string.ascii_uppercase
+        assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
+        addr = handle_lookup(sender)
+        owner, _ = get('asset', 'owner', None, tick)
+
+        if not owner:
+            put(addr, 'asset', 'owner', addr, tick)
+            put(addr, 'asset', 'functions', ['asset_update_ownership', 'asset_update_functions'], tick)
+
+
+# === ZIP20 ===
+def token_create(info, args):
     assert args['f'] == 'token_create'
-    sender = info['sender']
-    handle = handle_lookup(sender)
-    addr = handle or sender
 
     tick = args['a'][0]
     assert type(tick) is str
     assert len(tick) > 0 and len(tick) < 42
     assert tick[0] in string.ascii_uppercase
     assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
+
+    sender = info['sender']
+    addr = handle_lookup(sender)
+    owner, _ = get('asset', 'owner', None, tick)
+    assert owner == addr
 
     name = args['a'][1]
     assert type(name) is str
@@ -67,17 +118,117 @@ def token_create(info, args): # pragma: no cover
     assert type(decimal) is int
     assert decimal >= 0 and decimal <= 18
 
-    functions = ['transfer', 'approve', 'transfer_from', 'token_mint_once', 'asset_update_ownership', 'asset_update_functions']
+    functions = ['token_transfer', 'token_mint_once', 'asset_update_ownership', 'asset_update_functions']
+    if len(args['a']) == 4:
+        functions = args['a'][3]
+        assert type(functions) is list
+
     put(addr, tick, 'name', name)
     put(addr, tick, 'decimal', decimal)
     put(addr, 'asset', 'functions', functions, tick)
+    event('TokenCreated', [tick, name, decimal, functions])
 
-def transfer(info, args): # pragma: no cover
+
+def token_mint_once(info, args):
     tick = args['a'][0]
-    assert set(tick) <= set(string.ascii_uppercase+'_')
+    assert type(tick) is str
+    assert len(tick) > 0 and len(tick) < 42
+    assert tick[0] in string.ascii_uppercase
+    assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
 
-    assert args['f'] == 'transfer'
-    assert args['f'] in get('asset', 'functions', [], tick)
+    assert args['f'] == 'token_mint_once'
+    functions, _ = get('asset', 'functions', [], tick)
+    assert args['f'] in functions
+
+    sender = info['sender']
+    addr = handle_lookup(sender)
+    owner, _ = get('asset', 'owner', None, tick)
+    assert owner == addr
+
+    value = int(args['a'][1])
+    assert value > 0
+
+    total, _ = get(tick, 'total', None)
+    assert total is None, "Token already minted"
+    put(addr, tick, 'total', value)
+
+    balance, _ = get(tick, 'balance', 0, addr)
+    balance += value
+    put(addr, tick, 'balance', balance, addr)
+    event('TokenMintedOnce', [tick, total])
+
+
+def token_mint(info, args):
+    tick = args['a'][0]
+    assert type(tick) is str
+    assert len(tick) > 0 and len(tick) < 42
+    assert tick[0] in string.ascii_uppercase
+    assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
+
+    assert args['f'] == 'token_mint'
+    functions, _ = get('asset', 'functions', [], tick)
+    assert args['f'] in functions
+
+    sender = info['sender']
+    addr = handle_lookup(sender)
+    owner, _ = get('asset', 'owner', None, tick)
+    assert owner == addr
+
+    value = int(args['a'][1])
+    assert value > 0
+
+    balance, _ = get(tick, 'balance', 0, addr)
+    balance += value
+    put(addr, tick, 'balance', balance, addr)
+
+    total, _ = get(tick, 'total', 0)
+    total += value
+    put(addr, tick, 'total', total)
+    event('TokenMinted', [tick, value, total])
+
+
+def token_burn(info, args):
+    tick = args['a'][0]
+    assert type(tick) is str
+    assert len(tick) > 0 and len(tick) < 42
+    assert tick[0] in string.ascii_uppercase
+    assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
+
+    assert args['f'] == 'token_burn'
+    functions, _ = get('asset', 'functions', [], tick)
+    assert args['f'] in functions
+
+    sender = info['sender']
+    addr = handle_lookup(sender)
+    owner, _ = get('asset', 'owner', None, tick)
+    assert owner == addr
+
+    value = int(args['a'][1])
+    assert value > 0
+
+    balance, _ = get(tick, 'balance', 0, addr)
+    balance -= value
+    assert balance >= 0
+
+    total, _ = get(tick, 'total', 0)
+    total -= value
+    assert total >= 0
+
+    put(addr, tick, 'balance', balance, addr)
+    put(addr, tick, 'total', total)
+    event('TokenBurned', [tick, value, total])
+
+
+def token_transfer(info, args):
+    tick = args['a'][0]
+    assert type(tick) is str
+    assert len(tick) > 0 and len(tick) < 42
+    assert tick[0] in string.ascii_uppercase
+    assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
+
+    assert args['f'] == 'token_transfer'
+    functions, _ = get('asset', 'functions', [], tick)
+    assert args['f'] in functions
 
     receiver = args['a'][1].lower()
     assert len(receiver) <= 42
@@ -89,720 +240,629 @@ def transfer(info, args): # pragma: no cover
         assert len(receiver) > 4
 
     sender = info['sender']
-    handle = handle_lookup(sender)
-    addr = handle or sender
+    addr = handle_lookup(sender)
 
     value = int(args['a'][2])
     assert value > 0
 
-    sender_balance = get(tick, 'balance', 0, addr)
+    sender_balance, _ = get(tick, 'balance', 0, addr)
     assert sender_balance >= value
     sender_balance -= value
     put(addr, tick, 'balance', sender_balance, addr)
-    receiver_balance = get(tick, 'balance', 0, receiver)
+    receiver_balance, _ = get(tick, 'balance', 0, receiver)
     receiver_balance += value
     put(receiver, tick, 'balance', receiver_balance, receiver)
+    event('TokenTransfer', [tick, addr, receiver, value])
 
-def asset_create(info, args): # pragma: no cover
-    assert args['f'] == 'asset_create'
-    sender = info['sender']
-    tick = args['a'][0]
-    assert type(tick) is str
-    assert len(tick) > 0 and len(tick) < 42
-    assert tick[0] in string.ascii_uppercase
-    assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
-    handle = handle_lookup(sender)
-    addr = handle or sender
-    # print('handle', handle, 'addr', addr, 'sender', sender)
-    owner = get('asset', 'owner', None, tick)
-    # print(owner, addr)
-    assert not owner
 
-    put(addr, 'asset', 'owner', addr, tick)
-    put(addr, 'asset', 'functions', ['asset_update_ownership', 'asset_update_functions'], tick)
-
-def asset_update_ownership(info, args): # pragma: no cover
-    assert args['f'] == 'asset_update_ownership'
-    sender = info['sender']
-    tick = args['a'][0]
-    receiver = args['a'][1]
-    assert type(tick) is str
-    assert len(tick) > 0 and len(tick) < 42
-    assert tick[0] in string.ascii_uppercase
-    assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
-    # print('sender', sender)
-    handle = handle_lookup(sender)
-    # print('handle', handle)
-    addr = handle or sender
-
-    owner = get('asset', 'owner', None, tick)
-    # print( owner, addr)
-    assert owner == addr
-    functions = get('asset', 'functions', None, tick)
-    assert type(functions) is list
-    assert functions
-    put(receiver, 'asset', 'owner', receiver, tick)
-    put(receiver, 'asset', 'functions', functions, tick)
-
-def asset_update_functions(info, args): # pragma: no cover
-    assert args['f'] == 'asset_update_functions'
-    sender = info['sender']
-    handle = handle_lookup(sender)
-    # print('handle', handle)
-
+def token_send(info, args):
     tick = args['a'][0]
     assert type(tick) is str
     assert len(tick) > 0 and len(tick) < 42
     assert tick[0] in string.ascii_uppercase
     assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
 
-    functions = args['a'][1]
-    assert type(functions) is list
-    assert functions
+    assert args['f'] == 'token_send'
+    functions, _ = get('asset', 'functions', [], tick)
+    assert args['f'] in functions
+
+    sender = info['sender']
+    addr = handle_lookup(sender)
+
+    spender = args['a'][1].lower()  # the address allowed to spend
+    assert len(spender) <= 42
+    assert type(spender) is str
+    if len(spender) == 42:
+        assert spender.startswith('0x')
+        assert set(spender[2:]) <= set(string.digits+'abcdef')
+    else:
+        assert len(spender) > 4
+
+    value = int(args['a'][2])
+    assert value >= 0
+
+    put(addr, tick, 'allowance', value, f'{addr},{spender}')
+    event('TokenSendApproval', [tick, addr, spender, value])
 
 
-def bridge_incoming(info, args): # pragma: no cover
-    assert args['f'] == 'bridge_incoming'
-    # print('bridge_incoming', args)
-
+def token_accept(info, args):
     tick = args['a'][0]
     assert type(tick) is str
     assert len(tick) > 0 and len(tick) < 42
     assert tick[0] in string.ascii_uppercase
     assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
 
-    operator = get(tick, 'incoming_operator', None)
-    assert operator is not None, "Bridge is not initialized"
+    assert args['f'] == 'token_accept'
+    functions, _ = get('asset', 'functions', [], tick)
+    assert args['f'] in functions
+
+    from_addr = args['a'][1].lower()  # the address from which tokens are withdrawn
+    assert len(from_addr) <= 42
+    assert type(from_addr) is str
+    if len(from_addr) == 42:
+        assert from_addr.startswith('0x')
+        assert set(from_addr[2:]) <= set(string.digits+'abcdef')
+    else:
+        assert len(from_addr) > 4
+
+    to_addr = info['sender']
+    to_addr = handle_lookup(to_addr)
+    value = int(args['a'][2])
+    assert value > 0
+
+    allowance, _ = get(tick, 'allowance', 0, f'{from_addr},{to_addr}')
+    from_balance, _ = get(tick, 'balance', 0, from_addr)
+    allowance -= value
+    assert allowance >= 0
+    from_balance -= value
+    assert from_balance >= 0
+    put(from_addr, tick, 'allowance', allowance, f'{from_addr},{to_addr}')
+    put(from_addr, tick, 'balance', from_balance, from_addr)
+
+    to_balance, _ = get(tick, 'balance', 0, to_addr)
+    to_balance += value
+    put(to_addr, tick, 'balance', to_balance, to_addr)
+
+    event('TokenSent', [tick, from_addr, to_addr, value])
+
+
+# === ZIP23 ===
+
+# Paillier helpers + privacy transfer flow (ZIP23)
+
+def _egcd(a, b):
+    x0, y0 = 1, 0
+    x1, y1 = 0, 1
+    while b != 0:
+        q = a // b
+        a, b = b, a % b
+        x0, x1 = x1, x0 - q * x1
+        y0, y1 = y1, y0 - q * y1
+    return a, x0, y0
+
+def _modinv(a, n):
+    g, x, _ = _egcd(a, n)
+    assert g == 1
+    return x % n
+
+def _homomorphic_add(pub, c1, c2):
+    n = pub
+    n2 = n * n
+    return (c1 * c2) % n2
+
+def _homomorphic_sub(pub, c1, c2):
+    n = pub
+    n2 = n * n
+    inv = _modinv(c2, n2)
+    return (c1 * inv) % n2
+
+
+# Elliptic Curve parameters for secp256k1
+P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
+A = 0
+B = 7
+Gx = 55066263022277343669578718895168534326250603453777594175500187360389116729240
+Gy = 32670510020758816978083085130507043184471273380659243275938904335757337482424
+G = (Gx, Gy)
+N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+
+def _inverse_mod(k, p):
+    if k == 0:
+        raise
+    return pow(k, p - 2, p)
+
+def _is_on_curve(point):
+    if point is None:
+        return True
+    x, y = point
+    return (y * y - (x * x * x + A * x + B)) % P == 0
+
+def _point_add(point1, point2):
+    if point1 is None:
+        return point2
+    if point2 is None:
+        return point1
+    x1, y1 = point1
+    x2, y2 = point2
+    if x1 == x2 and y1 != y2:
+        return None
+    if x1 == x2:
+        m = (3 * x1 * x1 + A) * _inverse_mod(2 * y1, P)
+    else:
+        m = (y2 - y1) * _inverse_mod(x2 - x1, P)
+    m %= P
+    x3 = (m * m - x1 - x2) % P
+    y3 = (m * (x1 - x3) - y1) % P
+    return (x3, y3)
+
+def _scalar_mult(k, point):
+    result = None
+    addend = point
+    while k:
+        if k & 1:
+            result = _point_add(result, addend)
+        addend = _point_add(addend, addend)
+        k >>= 1
+    return result
+
+def _ecdsa_verify(msg_hash_hex, signature_hex, public_key_hex):
+    assert msg_hash_hex.startswith('0x')
+    assert signature_hex.startswith('0x')
+    assert public_key_hex.startswith('0x')
+    r = int(signature_hex[2:66], 16)
+    s = int(signature_hex[66:130], 16)
+    if not (1 <= r < N and 1 <= s < N):
+        return False
+    point = (int(public_key_hex[2:66], 16), int(public_key_hex[66:], 16))
+    e = int(msg_hash_hex[2:], 16)
+    w = _inverse_mod(s, N)
+    u1 = (e * w) % N
+    u2 = (r * w) % N
+    q = _point_add(_scalar_mult(u1, G), _scalar_mult(u2, point))
+    if q is None:
+        return False
+    x, y = q
+    return r == x % N
+
+def _ecdsa_recover(msg_hash_hex, signature_hex):
+    assert msg_hash_hex.startswith('0x')
+    assert signature_hex.startswith('0x')
+    r = int(signature_hex[2:66], 16)
+    s = int(signature_hex[66:130], 16)
+    z = int(msg_hash_hex[2:], 16)
+
+    if len(signature_hex[2:]) == 130:
+        v = int(signature_hex[130:], 16)
+        if v >= 27:
+            recovery_id = v - 27
+        else:
+            recovery_id = v
+        recovery_ids = [recovery_id]
+    else:
+        recovery_ids = [0, 1]
+
+    for recovery_id in recovery_ids:
+        for j in range(2):
+            x = r + j * N
+            if x >= P:
+                continue
+
+            y_squared = (pow(x, 3, P) + A * x + B) % P
+            y = pow(y_squared, (P + 1) // 4, P)
+
+            if y % 2 != recovery_id:
+                y = P - y
+
+            point = (x, y)
+            if not _is_on_curve(point):
+                continue
+
+            r_inv = _inverse_mod(r, N)
+            u1 = (-z * r_inv) % N
+            u2 = (s * r_inv) % N
+
+            q = _point_add(_scalar_mult(u1, G), _scalar_mult(u2, point))
+
+            if q is None:
+                continue
+
+            public_key_hex = f"0x{q[0]:064x}{q[1]:064x}"
+            if _ecdsa_verify(msg_hash_hex, signature_hex, public_key_hex):
+                return public_key_hex
+
+    return None
+
+def _pubkey_to_address(public_key_hex):
+    public_key_bytes = bytes.fromhex(public_key_hex[2:])
+    address_bytes = keccak(public_key_bytes)[-20:]
+    return '0x' + address_bytes.hex()
+
+def _message_hash(payload):
+    payload_hash = keccak(text=payload)
+    prefix = b"\x19Ethereum Signed Message:\n32"
+    return keccak(prefix + payload_hash)
+
+def _addr_recover(msg, signature_hex):
+    if not signature_hex.startswith('0x'):
+        signature_hex = '0x' + signature_hex
+    msg_hash = _message_hash(msg)
+    msg_hash_hex = '0x' + msg_hash.hex()
+    public_key_hex = _ecdsa_recover(msg_hash_hex, signature_hex)
+    if not public_key_hex:
+        return False
+    recovered = _pubkey_to_address(public_key_hex)
+    return recovered.lower()
+
+def _resolve_account(addr):
+    addr = addr.lower()
+    assert len(addr) <= 42
+    if len(addr) == 42:
+        assert addr.startswith('0x')
+        assert set(addr[2:]) <= set(string.digits + 'abcdef')
+    else:
+        assert len(addr) > 4
+
+    if len(addr) == 42:
+        return handle_lookup(addr)
+    return addr
+
+def _check_tick(tick):
+    assert type(tick) is str
+    assert len(tick) > 0 and len(tick) < 42
+    assert tick[0] in string.ascii_uppercase
+    assert set(tick) <= set(string.ascii_uppercase + string.digits + '_')
+
+
+def _get_pubkey(privacy_tick):
+    pub, _ = get(privacy_tick, 'privacy_pub', None)
+    if pub is None:
+        return None
+    return int(pub)
+
+
+def privacy_init(info, args):
+    assert args['f'] == 'privacy_init'
+
+    tick = args['a'][0]
+    _check_tick(tick)
+    privacy_tick = args['a'][1]
+    _check_tick(privacy_tick)
+    provider_addr = args['a'][2]
+    paillier_pub = int(args['a'][3])
 
     sender = info['sender']
-    assert sender == operator, "Only the operator can perform this operation"
+
+    existing_provider, _ = get(privacy_tick, 'privacy_provider', None)
+    if existing_provider is not None:
+        return
+
+    put(provider_addr, privacy_tick, 'tick', tick)
+    put(provider_addr, privacy_tick, 'transaction_count', 0)
+    put(provider_addr, privacy_tick, 'privacy_provider', provider_addr)
+    put(provider_addr, privacy_tick, 'privacy_pub', int(paillier_pub))
+
+
+# def privacy_update(info, args):
+#     assert args['f'] == 'privacy_update'
+
+
+def privacy_deposit(info, args):
+    assert args['f'] == 'privacy_deposit'
+
+    privacy_tick = args['a'][0]
+    _check_tick(privacy_tick)
+    tick, _ = get(privacy_tick, 'tick', None)
+    _check_tick(tick)
+
+    pub = _get_pubkey(privacy_tick)
+    assert pub is not None
+
+    functions, _ = get('asset', 'functions', [], tick)
+    assert args['f'] in functions
+    functions, _ = get('asset', 'functions', [], privacy_tick)
+    assert args['f'] in functions
+
+    sender = info['sender']
+    addr = handle_lookup(sender)
+
+    # existing_deposit, _ = get(privacy_tick, 'privacy_deposit', None, addr)
+    # if existing_deposit:
+    #     return
+
+    amount = int(args['a'][1])
+    assert amount >= 0
+
+    amount_cipher = int(args['a'][2])
+    assert amount_cipher >= 0
+
+    nonce = int(args['a'][3])
+    assert nonce >= 0
+
+    signature_hex = args['a'][4]
+    assert signature_hex.startswith('0x')
+
+    # transaction_id, _privacy_tick_owner = get(privacy_tick, 'tx_count', 0, addr)
+    stored_nonce, _ = get(privacy_tick,'privacy_nonce', 0, sender)
+    assert nonce == stored_nonce + 1
+
+    provider_addr, _ = get(privacy_tick, 'privacy_provider', None)
+    msg_to_sign = f'{privacy_tick},privacy_deposit,{str(amount)},{str(amount_cipher)},{str(nonce)}'
+
+    if provider_addr.lower() != _addr_recover(msg_to_sign, signature_hex):
+        return
+
+    balance, _ = get(tick, 'balance', 0, f'{sender}')
+    assert balance >= amount
+    balance_updated = balance - amount
+    put(addr, tick, 'balance', balance_updated, addr)
+    put(addr, privacy_tick, 'tx_count', transaction_id, addr)
+
+    # put(addr, privacy_tick, 'privacy_deposit', f'{str(amount)},{str(amount_cipher)},{str(transaction_id)}', f'{addr}')
+    balance_cipher, _ = get(privacy_tick, 'privacy_balance', 1, addr)
+    balance_cipher_updated = _homomorphic_add(pub, int(balance_cipher), amount_cipher)
+    put(sender, privacy_tick, 'privacy_balance', balance_cipher_updated, sender)
+    event('PrivacyDeposit', [privacy_tick, addr, amount, amount_cipher, transaction_id])
+
+
+# def privacy_enter(info, args):
+#     assert args['f'] == 'privacy_enter'
+
+#     privacy_tick = args['a'][0]
+#     _check_tick(privacy_tick)
+#     tick, _ = get(privacy_tick, 'tick', None)
+#     _check_tick(tick)
+
+#     functions, _ = get('asset', 'functions', [], privacy_tick)
+#     assert args['f'] in functions
+#     functions, _ = get('asset', 'functions', [], tick)
+#     assert args['f'] in functions
+
+#     sender = info['sender']
+#     transaction_id = int(args['a'][1])
+#     signature_hex = args['a'][2]
+
+#     pub = _get_pubkey(privacy_tick)
+#     assert pub is not None
+
+#     deposit_info, owner = get(privacy_tick, 'privacy_deposit', 0, f'{sender}')
+#     assert deposit_info is not None
+#     parts = deposit_info.split(',')
+#     assert len(parts) == 3
+#     amount = int(parts[0])
+#     amount_cipher = int(parts[1])
+#     tx_id = int(parts[2])
+#     assert tx_id == transaction_id
+#     put(owner, privacy_tick, 'privacy_deposit', None, f'{sender}')
+
+#     provider_addr, _ = get(privacy_tick, 'privacy_provider', None)
+#     msg_to_sign = f'{privacy_tick},privacy_deposit,{str(amount)},{str(amount_cipher)},{str(transaction_id)}'
+
+#     if provider_addr.lower() != _addr_recover(msg_to_sign, signature_hex):
+#         return
+
+#     balance, _ = get(tick, 'balance', 0, f'{privacy_tick}')
+#     assert balance >= 0
+#     balance_updated = balance + amount
+#     put(sender, tick, 'balance', balance_updated, f'{privacy_tick}')
+
+#     balance_cipher, _ = get(privacy_tick, 'privacy_balance', 1, f'{sender},1')
+#     balance_cipher_updated = _homomorphic_add(pub, int(balance_cipher), amount_cipher)
+#     put(sender, privacy_tick, 'privacy_balance', balance_cipher_updated, f'{sender},1')
+
+#     event('PrivacyEnter', [tick, sender, balance_cipher_updated])
+
+
+def privacy_withdraw(info, args):
+    assert args['f'] == 'privacy_withdraw'
+
+    privacy_tick = args['a'][0]
+    _check_tick(privacy_tick)
+    functions, _ = get('asset', 'functions', [], privacy_tick)
+    assert args['f'] in functions
 
     amount = int(args['a'][1])
     assert amount > 0
+    amount_cipher = int(args['a'][2])
+    assert amount_cipher > 0
+    old_balance_cipher = int(args['a'][3])
+    assert old_balance_cipher > 0
+    nonce = int(args['a'][4]) 
+    signature = args['a'][5]
 
-    receiver = args['a'][2].lower()
-    assert len(receiver) <= 42
-    assert type(receiver) is str
-    if len(receiver) == 42:
-        assert receiver.startswith('0x')
-        assert set(receiver[2:]) <= set(string.digits+'abcdef')
-    else:
-        assert len(receiver) > 4
+    sender = info['sender'].lower()
 
-    balance = int(get(tick, 'balance', 0, receiver))
-    balance += amount
-    put(receiver, tick, 'balance', balance, receiver)
+    # 读取witness_addr进行签名校验
+    # witness, _ = get(privacy_tick, 'witness_role', None)
+    provider_addr, _ = get(privacy_tick, 'privacy_provider', None)
+    assert provider_addr is not None, "Provider not initialized"
 
-    asset_owner = get('asset', 'owner', None, tick)
-    total = int(get(tick, 'total', 0, receiver))
-    total += amount
-    put(asset_owner, tick, 'total', total)
+    # nonce校验，防重放
+    stored_nonce, _ = get(privacy_tick,'privacy_nonce', 0, sender)
+    assert nonce == int(stored_nonce) + 1, "Invalid nonce"
 
-# def bridge_set_operator(info, args):
-#     assert args['f'] == 'bridge_set_operator'
-#     print('bridge_set_operator', args)
+    # 签名校验
+    msg = f"{privacy_tick},privacy_withdraw,{sender},{nonce},{amount},{amount_cipher},{old_balance_cipher}"
+    recovered_addr = _addr_recover(msg,signature)
+    assert recovered_addr == provider_addr.lower(), "Invalid signature"
 
-#     tick = args['a'][0]
-#     assert type(tick) is str
-#     assert len(tick) > 0 and len(tick) < 42
-#     assert tick[0] in string.ascii_uppercase
-#     assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
+    # 获取同态公钥
+    pub = _get_pubkey(privacy_tick)
+    assert pub is not None
 
-#     asset_owner = get('asset', 'owner', None, tick)
+    # 读取并校验链上状态
+    stored_balance, _ = get(privacy_tick, 'privacy_balance', 1, sender)
+    assert int(stored_balance) == old_balance_cipher, "State mismatch"
+
+    total_supply, _ = get(privacy_tick, 'total_supply', 0)
+    new_total = int(total_supply) - amount
+    assert new_total >= 0, "Insufficent total supply"
+
+    # 执行同态减法
+    new_balance_cipher = _homomorphic_sub(pub, int(stored_balance), amount_cipher)
+
+    # 更新
+    put(sender, privacy_tick, 'privacy_balance', new_balance_cipher, sender)
+    put(sender, privacy_tick, 'privacy_nonce', nonce, sender)
+    put(sender, privacy_tick, 'total_supply', new_total)
+
+    event('PrivacyWithdraw', [sender, amount, new_balance_cipher, nonce])
+    # event('PrivacyWithdraw', [privacy_tick, balance_cipher, amount, amount_cipher, transaction_id])
+
+
+# def privacy_exit(info, args):
+#     assert args['f'] == 'privacy_exit'
+
+#     privacy_tick = args['a'][0]
+#     _check_tick(privacy_tick)
+#     tick, _ = get(privacy_tick, 'tick', None)
+#     _check_tick(tick)
+
+#     functions, _ = get('asset', 'functions', [], tick)
+#     assert args['f'] in functions
+#     functions, _ = get('asset', 'functions', [], privacy_tick)
+#     assert args['f'] in functions
+
 #     sender = info['sender']
-#     handle = handle_lookup(sender)
-#     addr = handle or sender
-#     print('bridge_set_operator', asset_owner, addr)
-#     assert addr == asset_owner, "Only the asset owner can perform this operation"
+#     transaction_id = int(args['a'][1])
+#     signature_hex = args['a'][2]
 
-#     operator = args['a'][1].lower()
-#     assert type(operator) is str
-#     assert len(operator) == 42
-#     assert operator.startswith('0x')
-#     assert set(operator[2:]) <= set(string.digits+'abcdef')
+#     withdraw_info, _ = get(privacy_tick, 'privacy_withdraw', None, sender)
+#     if not withdraw_info:
+#         return
 
-#     put(addr, tick, 'incoming_operator', operator)
+#     parts = withdraw_info.split(',')
+#     assert len(parts) == 4
+#     balance_cipher = parts[0]
+#     amount = int(parts[1])
+#     amount_cipher = int(parts[2])
+#     tx_id = int(parts[3])
+#     assert tx_id == transaction_id
 
-# def bridge_with_token_purchase(info, args):
-#     assert args['f'] == 'bridge_with_token_purchase'
-#     print('bridge_with_token_purchase', args)
+#     provider_addr, _ = get(privacy_tick, 'privacy_provider', None)
+#     msg_to_sign = f'{privacy_tick},privacy_withdraw,{str(amount)},{str(transaction_id)}'
 
-#     tick = args['a'][0]
-#     assert type(tick) is str
-#     assert len(tick) > 0 and len(tick) < 42
-#     assert tick[0] in string.ascii_uppercase
-#     assert set(tick) <= set(string.ascii_uppercase+string.digits+'_')
+#     if provider_addr.lower() != _addr_recover(msg_to_sign, signature_hex):
+#         return
 
-#     operator = get(tick, 'incoming_operator', None)
-#     assert operator is not None, "Bridge is not initialized"
+#     pool_balance, _ = get(tick, 'balance', 0, privacy_tick)
+#     assert pool_balance >= amount
+#     put(sender, tick, 'balance', pool_balance - amount, privacy_tick)
 
+#     balance, _ = get(tick, 'balance', 0, sender)
+#     put(sender, tick, 'balance', balance + amount, sender)
+
+#     put(sender, privacy_tick, 'privacy_withdraw', None, sender)
+
+#     event('PrivacyExit', [privacy_tick, sender, amount_cipher])
+
+
+def privacy_transfer(info, args):
+    assert args['f'] == 'privacy_transfer'
+
+    privacy_tick = args['a'][0]
+    _check_tick(privacy_tick)
+    functions, _ = get('asset', 'functions', [], privacy_tick)
+    assert args['f'] in functions
+
+    sender = info['sender']
+    from_addr = handle_lookup(sender)
+    from_subaccount = int(args['a'][1])
+    assert from_subaccount > 0
+    to_addr = _resolve_account(args['a'][2])
+    to_subaccount = int(args['a'][3])
+    assert to_subaccount > 0
+    amount_cipher = int(args['a'][4])
+
+    send_info, _ = get(privacy_tick, 'privacy_transfer', None, f'{from_addr},{str(from_subaccount)}')
+    if send_info:
+        return
+
+    pub = _get_pubkey(privacy_tick)
+    assert pub is not None
+
+    balance_cipher, _ = get(privacy_tick, 'privacy_balance', from_subaccount, f'{from_addr},{str(from_subaccount)}')
+    balance_cipher_updated = _homomorphic_sub(pub, int(balance_cipher), amount_cipher)
+    put(sender, privacy_tick, 'privacy_balance', balance_cipher_updated, f'{from_addr},{str(from_subaccount)}')
+
+    transaction_id, privacy_tick_owner = get(privacy_tick, 'transaction_count', 0)
+    transaction_id += 1
+    put(privacy_tick_owner, privacy_tick, 'transaction_count', transaction_id)
+    put(sender, privacy_tick, 'privacy_transfer', f'{str(balance_cipher)},{str(amount_cipher)},{to_addr},{str(to_subaccount)},{str(transaction_id)}', f'{sender},{str(from_subaccount)}')
+
+    event('PrivacyTransfer', [privacy_tick, from_addr, from_subaccount, to_addr, to_subaccount, balance_cipher, amount_cipher, transaction_id])
+
+
+# def privacy_accept(info, args):
+#     assert args['f'] == 'privacy_accept'
+
+#     privacy_tick = args['a'][0]
+#     _check_tick(privacy_tick)
+#     functions, _ = get('asset', 'functions', [], privacy_tick)
+#     assert args['f'] in functions
+
+#     from_addr = _resolve_account(args['a'][1])
+#     from_subaccount = int(args['a'][2])
+#     assert from_subaccount > 0
+#     signature_hex = args['a'][3]
+#     to_subaccount = int(args['a'][4])
 #     sender = info['sender']
-#     assert sender == operator, "Only the operator can perform this operation"
 
-#     amount = int(args['a'][1])
-#     assert amount > 0
+#     send_info, _ = get(privacy_tick, 'privacy_send', None, f'{from_addr},{str(from_subaccount)}')
+#     if not send_info:
+#         return
+#     parts = send_info.split(',')
+#     assert len(parts) == 5
+#     # senderbalance_cipher = int(parts[0])
+#     amount_cipher = int(parts[1])
+#     to_addr = parts[2]
+#     to_subaccount = int(parts[3])
+#     transaction_id = int(parts[4])
+#     assert to_addr == sender
+
+#     pub = _get_pubkey(privacy_tick)
+#     assert pub is not None
+
+#     provider_addr, _ = get(privacy_tick, 'privacy_provider', None)
+#     msg_to_sign = f'{privacy_tick},privacy_send,{from_addr},{str(from_subaccount)},{str(transaction_id)}'
+#     if provider_addr.lower() != _addr_recover(msg_to_sign, signature_hex):
+#         return
+
+#     balance_cipher, _ = get(privacy_tick, 'privacy_balance', 1, f'{to_addr},{str(to_subaccount)}')
+#     balance_cipher_updated = _homomorphic_add(pub, int(balance_cipher), amount_cipher)
+#     put(to_addr, privacy_tick, 'privacy_balance', balance_cipher_updated, f'{to_addr},{str(to_subaccount)}')
+#     put(from_addr, privacy_tick, 'privacy_send', None, f'{from_addr},{str(from_subaccount)}')
+
+#     event('PrivacyAccept', [privacy_tick, to_subaccount, balance_cipher_updated, amount_cipher, transaction_id])
+
+
+# def privacy_decline(info, args):
+#     assert args['f'] == 'privacy_decline'
+
+#     privacy_tick = args['a'][0]
+#     _check_tick(privacy_tick)
+#     from_addr = _resolve_account(args['a'][1])
+#     from_subaccount = int(args['a'][2])
+#     assert from_subaccount > 0
+#     sender = info['sender']
+
+#     send_info, _ = get(privacy_tick, 'privacy_send', None, f'{from_addr},{str(from_subaccount)}')
+#     if not send_info:
+#         return
+#     parts = send_info.split(',')
+#     assert len(parts) == 5
+#     amount_cipher = int(parts[1])
+#     to_addr = parts[2]
+#     transaction_id = int(parts[4])
+#     assert to_addr == sender
+
+#     pub = _get_pubkey(privacy_tick)
+#     assert pub is not None
+
+#     balance_cipher, _ = get(privacy_tick, 'privacy_balance', 1, f'{from_addr},{str(from_subaccount)}')
+#     balance_cipher_updated = _homomorphic_add(pub, int(balance_cipher), amount_cipher)
+#     put(from_addr, privacy_tick, 'privacy_balance', balance_cipher_updated, f'{from_addr},{str(from_subaccount)}')
+#     put(from_addr, privacy_tick, 'privacy_send', None, f'{from_addr},{str(from_subaccount)}')
+
+#     event('PrivacyDecline', [privacy_tick, from_addr, from_subaccount, balance_cipher_updated, amount_cipher, transaction_id])
 
-#     receiver = args['a'][2].lower()
-#     assert len(receiver) <= 42
-#     assert type(receiver) is str
-#     if len(receiver) == 42:
-#         assert receiver.startswith('0x')
-#         assert set(receiver[2:]) <= set(string.digits+'abcdef')
-#     else:
-#         assert len(receiver) > 4
 
-#     balance = int(get(tick, 'balance', 0, receiver))
-#     balance += amount
-#     put(receiver, tick, 'balance', balance, receiver)
-
-#     asset_owner = get('asset', 'owner', None, tick)
-#     total = int(get(tick, 'total', 0, receiver))
-#     total += amount
-#     put(asset_owner, tick, 'total', total)
-
-
-# def token_sell_bondingcurve(info, args):
-#     assert args['f'] == 'token_sell_bondingcurve'
-#     print('token_sell_bondingcurve', args)
-
-#     tick = args['a'][0]
-
-# def token_set_bondingcurve(info, args):
-#     assert args['f'] == 'token_set_bondingcurve'
-#     tick = args['a'][0]
-
-
-def trade_limit_order(info, args):
-    assert args['f'] == 'trade_limit_order'
-    sender = info['sender']
-    handle = handle_lookup(sender)
-    addr = handle or sender
-
-    base_tick = args['a'][0]
-    quote_tick = args['a'][2]
-    assert set(base_tick) <= set(string.ascii_uppercase+'_')
-    assert set(quote_tick) <= set(string.ascii_uppercase+'_')
-    # TODO: make sure quote_tick is set
-
-    pair = '%s_%s' % tuple([base_tick, quote_tick])
-    # TODO: check if pair exists
-
-    base_value = int(args['a'][1])
-    quote_value = int(args['a'][3])
-    assert base_value * quote_value < 0
-    K = 10**18
-
-    trade_buy_start = get('trade', f'{pair}_buy_start', 1)
-    trade_buy_new = get('trade', f'{pair}_buy_new', 1)
-    trade_sell_start = get('trade', f'{pair}_sell_start', 1)
-    trade_sell_new = get('trade', f'{pair}_sell_new', 1)
-
-    if base_value < 0 and quote_value > 0:
-        balance = get(base_tick, 'balance', 0, addr)
-        balance += base_value
-        assert balance >= 0
-        put(addr, base_tick, 'balance', balance, addr)
-
-        trade_sell_no = trade_sell_start
-        while True:
-            sell = get('trade', f'{pair}_sell', None, str(trade_sell_no))
-            price = - quote_value * K // base_value
-
-            if sell is None:
-                put(addr, 'trade', f'{pair}_sell', [addr, base_value, quote_value, price, None, None], str(trade_sell_new))
-                trade_sell_new += 1
-                put(addr, 'trade', f'{pair}_sell_new', trade_sell_new)
-                break
-
-            if price < sell[3]:
-                next_sell_id = sell[5]
-                put(addr, 'trade', f'{pair}_sell', [addr, base_value, quote_value, price, trade_sell_no, next_sell_id], str(trade_sell_new))
-                if next_sell_id is None:
-                    trade_sell_start = trade_sell_new
-                    put(addr, 'trade', f'{pair}_sell_start', trade_sell_start)
-                sell[5] = trade_sell_new
-                trade_sell_new += 1
-                put(addr, 'trade', f'{pair}_sell_new', trade_sell_new)
-
-                put(addr, 'trade', f'{pair}_sell', sell, str(trade_sell_no))
-                if next_sell_id is not None:
-                    next_sell = get('trade', f'{pair}_sell', None, str(next_sell_id))
-                    if next_sell is not None:
-                        next_sell[4] = sell[5]
-                        put(addr, 'trade', f'{pair}_sell', next_sell, str(next_sell_id))
-                break
-
-            if sell[4] is None:
-                put(addr, 'trade', f'{pair}_sell', [addr, base_value, quote_value, price, None, trade_sell_no], str(trade_sell_new))
-                put(addr, 'trade', f'{pair}_sell', [sell[0], sell[1], sell[2], sell[3], trade_sell_new, sell[5]], str(trade_sell_no))
-                trade_sell_new += 1
-                put(addr, 'trade', f'{pair}_sell_new', trade_sell_new)
-                break
-
-            trade_sell_no = sell[4]
-
-    elif base_value > 0 and quote_value < 0:
-        balance = get(quote_tick, 'balance', 0, addr)
-        balance += quote_value
-        assert balance >= 0
-        put(addr, quote_tick, 'balance', balance, addr)
-
-        trade_buy_no = trade_buy_start
-        while True:
-            buy = get('trade', f'{pair}_buy', None, str(trade_buy_no))
-            price = - quote_value * K // base_value
-
-            if buy is None:
-                buy = [addr, base_value, quote_value, price, None, None]
-                put(addr, 'trade', f'{pair}_buy', buy, str(trade_buy_new))
-                trade_buy_new += 1
-                put(addr, 'trade', f'{pair}_buy_new', trade_buy_new)
-                break
-
-            if price > buy[3]:
-                next_buy_id = buy[5]
-                put(addr, 'trade', f'{pair}_buy', [addr, base_value, quote_value, price, trade_buy_no, next_buy_id], str(trade_buy_new))
-                if next_buy_id is None:
-                    trade_buy_start = trade_buy_new
-                    put(addr, 'trade', f'{pair}_buy_start', trade_buy_start)
-                buy[5] = trade_buy_new
-                trade_buy_new += 1
-                put(addr, 'trade', f'{pair}_buy_new', trade_buy_new)
-
-                put(addr, 'trade', f'{pair}_buy', buy, str(trade_buy_no))
-                if next_buy_id is not None:
-                    next_buy = get('trade', f'{pair}_buy', None, str(next_buy_id))
-                    if next_buy is not None:
-                        next_buy[4] = buy[5]
-                        put(addr, 'trade', f'{pair}_buy', next_buy, str(next_buy_id))
-                break
-
-            if buy[4] is None:
-                put(addr, 'trade', f'{pair}_buy', [addr, base_value, quote_value, price, None, trade_buy_no], str(trade_buy_new))
-                put(addr, 'trade', f'{pair}_buy', [buy[0], buy[1], buy[2], buy[3], trade_buy_new, buy[5]], str(trade_buy_no))
-                trade_buy_new += 1
-                put(addr, 'trade', f'{pair}_buy_new', trade_buy_new)
-                break
-
-            trade_buy_no = buy[4]
-
-    trade_sell_no = trade_sell_start
-    highest_buy_price = None
-
-    while True:
-        sell = get('trade', f'{pair}_sell', None, str(trade_sell_no))
-        if not sell:
-            break
-        sell_price = sell[3]
-        if highest_buy_price and sell_price > highest_buy_price:
-            break
-
-        trade_buy_no = trade_buy_start
-        while True:
-            buy = get('trade', f'{pair}_buy', None, str(trade_buy_no))
-            if not buy:
-                break
-            buy_price = buy[3]
-            if highest_buy_price is None:
-                highest_buy_price = buy_price
-            if sell_price > buy_price:
-                trade_buy_no = buy[4]
-                continue
-
-            matched_price = sell_price
-            dx_base = min(-sell[1], buy[1])
-            dx_quote = dx_base * matched_price // K
-            sell[1] += dx_base
-            sell[2] -= dx_quote
-            buy[1] -= dx_base
-            buy[2] += dx_quote
-
-            balance = get(base_tick, 'balance', 0, buy[0])
-            balance += dx_base
-            assert balance >= 0
-            put(buy[0], base_tick, 'balance', balance, buy[0])
-
-            balance = get(quote_tick, 'balance', 0, sell[0])
-            balance += dx_quote
-            assert balance >= 0
-            put(sell[0], quote_tick, 'balance', balance, sell[0])
-
-            if buy[1] == 0:
-                if buy[4]:
-                    prev_buy = get('trade', f'{pair}_buy', None, str(buy[4]))
-                    prev_buy[5] = buy[5]
-                    put(prev_buy[0], 'trade', f'{pair}_buy', prev_buy, str(buy[4]))
-
-                if buy[5]:
-                    next_buy = get('trade', f'{pair}_buy', None, str(buy[5]))
-                    next_buy[4] = buy[4]
-                    put(next_buy[0], 'trade', f'{pair}_buy', next_buy, str(buy[5]))
-
-                if buy[4] is not None and buy[5] is None:
-                    trade_buy_start = buy[4]
-                elif buy[4] is None and buy[5] is None:
-                    trade_buy_start = trade_buy_new
-
-                if buy[2] < 0:
-                    balance = get(quote_tick, 'balance', 0, buy[0])
-                    balance -= buy[2]
-                    assert balance >= 0
-                    put(buy[0], quote_tick, 'balance', balance, buy[0])
-    
-                put(buy[0], 'trade', f'{pair}_buy', None, str(trade_buy_no))
-            else:
-                put(buy[0], 'trade', f'{pair}_buy', buy, str(trade_buy_no))
-
-            if sell[1] == 0:
-                break
-            if buy[4] is None:
-                break
-            trade_buy_no = buy[4]
-
-        if sell[1] == 0:
-            if sell[4]:
-                prev_sell = get('trade', f'{pair}_sell', None, str(sell[4]))
-                prev_sell[5] = sell[5]
-                put(prev_sell[0], 'trade', f'{pair}_sell', prev_sell, str(sell[4]))
-
-            if sell[5]:
-                next_sell = get('trade', f'{pair}_sell', None, str(sell[5]))
-                next_sell[4] = sell[4]
-                put(next_sell[0], 'trade', f'{pair}_sell', next_sell, str(sell[5]))
-
-            if sell[4] is not None and sell[5] is None:
-                trade_sell_start = sell[4]
-            elif sell[4] is None and sell[5] is None:
-                trade_sell_start = trade_sell_new
-
-            if sell[1] < 0:
-                balance = get(base_tick, 'balance', 0, sell[0])
-                balance -= sell[1]
-                assert balance >= 0
-                put(sell[0], base_tick, 'balance', balance, sell[0])
-
-            put(sell[0], 'trade', f'{pair}_sell', None, str(trade_sell_no))
-        else:
-            put(sell[0], 'trade', f'{pair}_sell', sell, str(trade_sell_no))
-
-        if sell[4] is None:
-            break
-        trade_sell_no = sell[4]
-
-    put('will_change_to_pair_owner', 'trade', f'{pair}_sell_start', trade_sell_start)
-    put('will_change_to_pair_owner', 'trade', f'{pair}_buy_start', trade_buy_start)
-
-
-def trade_market_order(info, args):
-    assert args['f'] == 'trade_market_order'
-    sender = info['sender']
-    handle = handle_lookup(sender)
-    addr = handle or sender
-
-    base_tick = args['a'][0]
-    quote_tick = args['a'][2]
-    assert set(base_tick) <= set(string.ascii_uppercase+'_')
-    assert set(quote_tick) <= set(string.ascii_uppercase+'_')
-    pair = '%s_%s' % tuple([base_tick, quote_tick])
-
-    base_value = args['a'][1]
-    quote_value = args['a'][3]
-    trade_sell_start = get('trade', f'{pair}_sell_start', 1)
-    trade_buy_start = get('trade', f'{pair}_buy_start', 1)
-
-    K = 10**18
-    if quote_value is None and int(base_value) < 0:
-        base_value = int(args['a'][1])
-        base_balance = get(base_tick, 'balance', 0, addr)
-        base_sum = 0
-
-        trade_buy_no = trade_buy_start
-        while True:
-            buy = get('trade', f'{pair}_buy', None, str(trade_buy_no))
-            if buy is None:
-                break
-
-            price = buy[3]
-            dx_base = min(buy[1], -buy[2] * K // price, -base_value)
-            dx_quote = dx_base * price // K
-            if dx_base == 0 or dx_quote == 0:
-                break
-            buy[1] -= dx_base
-            buy[2] += dx_quote
-
-            if base_balance - dx_base < 0:
-                break
-            base_balance -= dx_base
-            base_sum += dx_base
-
-            if buy[1] == 0 or buy[1] // price == 0:
-                if buy[4]:
-                    prev_buy = get('trade', f'{pair}_buy', None, str(buy[4]))
-                    prev_buy[5] = buy[5]
-                    put(prev_buy[0], 'trade', f'{pair}_buy', prev_buy, str(buy[4]))
-
-                if buy[5]:
-                    next_buy = get('trade', f'{pair}_buy', None, str(buy[5]))
-                    next_buy[4] = buy[4]
-                    put(next_buy[0], 'trade', f'{pair}_buy', next_buy, str(buy[5]))
-
-                if buy[4] is not None and buy[5] is None:
-                    trade_buy_start = buy[4]
-                    put(addr, 'trade', f'{pair}_buy_start', trade_buy_start)
-                elif buy[4] is None and buy[5] is None:
-                    trade_buy_new = get('trade', f'{pair}_buy_new', 1)
-                    trade_buy_start = trade_buy_new
-                    put(addr, 'trade', f'{pair}_buy_start', trade_buy_start)
-
-                if buy[2] < 0:
-                    balance = get(quote_tick, 'balance', 0, buy[0])
-                    balance -= buy[2]
-                    assert balance >= 0
-                    put(buy[0], quote_tick, 'balance', balance, buy[0])
-    
-                put(buy[0], 'trade', f'{pair}_buy', None, str(trade_buy_no))
-            else:
-                put(buy[0], 'trade', f'{pair}_buy', buy, str(trade_buy_no))
-
-            balance = get(base_tick, 'balance', 0, buy[0])
-            balance += dx_base
-            assert balance >= 0
-            put(addr, base_tick, 'balance', balance, buy[0])
-
-            base_value += dx_base
-            assert base_value <= 0
-            balance = get(quote_tick, 'balance', 0, addr)
-            balance += dx_quote
-            assert balance >= 0
-            put(addr, quote_tick, 'balance', balance, addr)
-
-            if buy[4] is None:
-                break
-            trade_buy_no = buy[4]
-
-        balance = get(base_tick, 'balance', 0, addr)
-        balance -= base_sum
-        assert balance >= 0
-        put(addr, base_tick, 'balance', balance, addr)
-
-    elif quote_value is None and int(base_value) > 0:
-        base_value = int(args['a'][1])
-        quote_balance = get(quote_tick, 'balance', 0, addr)
-        quote_sum = 0
-
-        trade_sell_no = trade_sell_start
-        while True:
-            sell = get('trade', f'{pair}_sell', None, str(trade_sell_no))
-            if sell is None:
-                break
-
-            price = sell[3]
-            dx_base = min(-sell[1], quote_balance * K // price, base_value)
-            dx_quote = dx_base * price // K
-            if dx_base == 0 or dx_quote == 0:
-                break
-            sell[1] += dx_base
-            sell[2] -= dx_quote
-
-            if quote_balance - dx_quote < 0:
-                break
-            quote_balance -= dx_quote
-            quote_sum += dx_quote
-
-            if sell[1] == 0 or sell[1] // price == 0:
-                if sell[4]:
-                    prev_sell = get('trade', f'{pair}_sell', None, str(sell[4]))
-                    prev_sell[5] = sell[5]
-                    put(prev_sell[0], 'trade', f'{pair}_sell', prev_sell, str(sell[4]))
-
-                if sell[5]:
-                    next_sell = get('trade', f'{pair}_sell', None, str(sell[5]))
-                    next_sell[4] = sell[4]
-                    put(next_sell[0], 'trade', f'{pair}_sell', next_sell, str(sell[5]))
-
-                if sell[4] is not None and sell[5] is None:
-                    trade_sell_start = sell[4]
-                    put(addr, 'trade', f'{pair}_sell_start', trade_sell_start)
-                elif sell[4] is None and sell[5] is None:
-                    trade_sell_new = get('trade', f'{pair}_sell_new', 1)
-                    trade_sell_start = trade_sell_new
-                    put(addr, 'trade', f'{pair}_sell_start', trade_sell_start)
-
-                if sell[1] < 0:
-                    balance = get(base_tick, 'balance', 0, sell[0])
-                    balance -= sell[1]
-                    assert balance >= 0
-                    put(sell[0], base_tick, 'balance', balance, sell[0])
-
-                put(sell[0], 'trade', f'{pair}_sell', None, str(trade_sell_no))
-            else:
-                put(sell[0], 'trade', f'{pair}_sell', sell, str(trade_sell_no))
-
-            balance = get(quote_tick, 'balance', 0, sell[0])
-            balance += dx_quote
-            assert balance >= 0
-            put(addr, quote_tick, 'balance', balance, sell[0])
-
-            base_value -= dx_base
-            assert base_value >= 0
-            balance = get(base_tick, 'balance', 0, addr)
-            balance += dx_base
-            assert balance >= 0
-            put(addr, base_tick, 'balance', balance, addr)
-
-            if sell[4] is None:
-                break
-            trade_sell_no = sell[4]
-
-        balance = get(quote_tick, 'balance', 0, addr)
-        balance -= quote_sum
-        assert balance >= 0
-        put(addr, quote_tick, 'balance', balance, addr)
-
-    elif base_value is None and int(quote_value) < 0:
-        quote_value = int(args['a'][3])
-        quote_balance = get(quote_tick, 'balance', 0, addr)
-        quote_sum = 0
-
-        trade_sell_no = trade_sell_start
-        while True:
-            sell = get('trade', f'{pair}_sell', None, str(trade_sell_no))
-            if sell is None:
-                break
-
-            price = sell[3]
-            dx_base = min(-sell[1], -quote_value * K // price)
-            dx_quote = dx_base * price // K
-            if dx_base == 0 or  dx_quote == 0:
-                break
-            sell[1] += dx_base
-            sell[2] -= dx_quote
-
-            if quote_balance - dx_quote < 0:
-                break
-            quote_balance -= dx_quote
-            quote_sum += dx_quote
-
-            if sell[1] == 0 or sell[1] // price == 0:
-                if sell[4]:
-                    prev_sell = get('trade', f'{pair}_sell', None, str(sell[4]))
-                    prev_sell[5] = sell[5]
-                    put(prev_sell[0], 'trade', f'{pair}_sell', prev_sell, str(sell[4]))
-
-                if sell[5]:
-                    next_sell = get('trade', f'{pair}_sell', None, str(sell[5]))
-                    next_sell[4] = sell[4]
-                    put(next_sell[0], 'trade', f'{pair}_sell', next_sell, str(sell[5]))
-
-                if sell[4] is not None and sell[5] is None:
-                    trade_sell_start = sell[4]
-                    put(addr, 'trade', f'{pair}_sell_start', trade_sell_start)
-                elif sell[4] is None and sell[5] is None:
-                    trade_sell_new = get('trade', f'{pair}_sell_new', 1)
-                    trade_sell_start = trade_sell_new
-                    put(addr, 'trade', f'{pair}_sell_start', trade_sell_start)
-
-                if sell[1] < 0:
-                    balance = get(base_tick, 'balance', 0, sell[0])
-                    balance -= sell[1]
-                    assert balance >= 0
-                    put(sell[0], base_tick, 'balance', balance, sell[0])
-
-                put(sell[0], 'trade', f'{pair}_sell', None, str(trade_sell_no))
-            else:
-                put(sell[0], 'trade', f'{pair}_sell', sell, str(trade_sell_no))
-
-            balance = get(quote_tick, 'balance', 0, sell[0])
-            balance += dx_quote
-            assert balance >= 0
-            put(addr, quote_tick, 'balance', balance, sell[0])
-
-            quote_value += dx_quote
-            assert quote_value <= 0
-            balance = get(base_tick, 'balance', 0, addr)
-            balance += dx_base
-            assert balance >= 0
-            put(addr, base_tick, 'balance', balance, addr)
-
-            if sell[4] is None:
-                break
-            trade_sell_no = sell[4]
-
-        balance = get(quote_tick, 'balance', 0, addr)
-        balance -= quote_sum
-        assert balance >= 0
-        put(addr, quote_tick, 'balance', balance, addr)
-
-    elif base_value is None and int(quote_value) > 0:
-        quote_value = int(args['a'][3])
-        base_balance = get(base_tick, 'balance', 0, addr)
-        base_sum = 0
-
-        trade_buy_no = trade_buy_start
-        while True:
-            buy = get('trade', f'{pair}_buy', None, str(trade_buy_no))
-            if buy is None:
-                break
-
-            price = buy[3]
-            dx_base = min(buy[1], base_balance, quote_value * K // price)
-            dx_quote = dx_base * price // K
-            if dx_base == 0 or dx_quote == 0:
-                break
-            buy[1] -= dx_base
-            buy[2] += dx_quote
-
-            if base_balance - dx_base < 0:
-                break
-            base_balance -= dx_base
-            base_sum += dx_base
-
-            if buy[1] == 0 or buy[1] // price == 0:
-                if buy[4]:
-                    prev_buy = get('trade', f'{pair}_buy', None, str(buy[4]))
-                    prev_buy[5] = buy[5]
-                    put(prev_buy[0], 'trade', f'{pair}_buy', prev_buy, str(buy[4]))
-
-                if buy[5]:
-                    next_buy = get('trade', f'{pair}_buy', None, str(buy[5]))
-                    next_buy[4] = buy[4]
-                    put(next_buy[0], 'trade', f'{pair}_buy', next_buy, str(buy[5]))
-
-                if buy[4] is not None and buy[5] is None:
-                    trade_buy_start = buy[4]
-                    put(addr, 'trade', f'{pair}_buy_start', trade_buy_start)
-                elif buy[4] is None and buy[5] is None:
-                    trade_buy_new = get('trade', f'{pair}_buy_new', 1)
-                    trade_buy_start = trade_buy_new
-                    put(addr, 'trade', f'{pair}_buy_start', trade_buy_start)
-
-                if buy[2] < 0:
-                    balance = get(quote_tick, 'balance', 0, buy[0])
-                    balance -= buy[2]
-                    assert balance >= 0
-                    put(buy[0], quote_tick, 'balance', balance, buy[0])
-    
-                put(buy[0], 'trade', f'{pair}_buy', None, str(trade_buy_no))
-            else:
-                put(buy[0], 'trade', f'{pair}_buy', buy, str(trade_buy_no))
-
-            balance = get(base_tick, 'balance', 0, buy[0])
-            balance += dx_base
-            assert balance >= 0
-            put(addr, base_tick, 'balance', balance, buy[0])
-
-            quote_value -= dx_quote
-            assert quote_value >= 0
-            balance = get(quote_tick, 'balance', 0, addr)
-            balance += dx_quote
-            assert balance >= 0
-            put(addr, quote_tick, 'balance', balance, addr)
-
-            if buy[4] is None:
-                break
-            trade_buy_no = buy[4]
-
-        balance = get(base_tick, 'balance', 0, addr)
-        balance -= base_sum
-        assert balance >= 0
-        put(addr, base_tick, 'balance', balance, addr)
