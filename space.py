@@ -14,10 +14,10 @@ def put(_owner, _asset, _var, _value, _key = None):
         var = _var
 
     asset_name = _asset
-    # addr = _owner.lower()
+    addr = _owner.lower()
     k = '%s-%s' % (asset_name, var)
     state = states[-1]
-    state[k] = _value
+    state[k] = addr, _value
 
 def get(_asset, _var, _default = None, _key = None):
     global sender
@@ -35,10 +35,14 @@ def get(_asset, _var, _default = None, _key = None):
     k = '%s-%s' % (asset_name, var)
     for state in reversed(states):
         if k in state:
-            v = state[k]
-            return v
+            addr, v = state[k]
+            return v, addr
 
-    return value
+    return value, None
+
+def event(_event, _args):
+    global states
+    # states[-1]['event'] = _event, _args
 
 def handle_lookup(_addr):
     return _addr
@@ -46,3 +50,4 @@ def handle_lookup(_addr):
 def nextblock():
     global states
     states.append({})
+
