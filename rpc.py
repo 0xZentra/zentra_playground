@@ -21,6 +21,9 @@ import hexbytes
 import rlp
 
 import space
+import sys
+import os
+import importlib.util
 
 CHAIN_ID = 31337
 REVERSED_NO = 10**16
@@ -127,6 +130,26 @@ class RPCHandler(tornado.web.RequestHandler):
         req = tornado.escape.json_decode(self.request.body)
         print(req['method'])
         rpc_id = req['id']
+
+        # 处理自定义逻辑函数调用
+        if req.get('method') == 'zentra_call':
+            # 延迟导入，避免循环依赖
+            from play import GLOBAL_FUNCTIONS
+            func_name = req['params'][0]
+            args = req['params'][1] if len(req['params']) > 1 else {}
+            info = req['params'][2] if len(req['params']) > 2 else {'sender': space.sender}
+            if func_name in GLOBAL_FUNCTIONS:
+                try:
+                    result = GLOBAL_FUNCTIONS[func_name](info, args)
+                    resp = {'jsonrpc': '2.0', 'result': result, 'id': rpc_id}
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    resp = {'jsonrpc': '2.0', 'error': str(e), 'id': rpc_id}
+            else:
+                resp = {'jsonrpc': '2.0', 'error': f'Method {func_name} not found in ZIPs', 'id': rpc_id}
+            self.write(tornado.escape.json_encode(resp))
+            return
         if req.get('method') == 'eth_chainId':
             resp = {'jsonrpc':'2.0', 'result': hex(CHAIN_ID), 'id':rpc_id}
 

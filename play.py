@@ -10,7 +10,11 @@ import tornado.web
 import tornado.ioloop
 
 import space
-import funcs
+import importlib.util
+import importlib.machinery
+import os
+# 全局函数字典，供 rpc.py 使用
+GLOBAL_FUNCTIONS = {}
 import rpc
 
 class NamedFunction:
@@ -50,12 +54,31 @@ namespace = {
     '__doc__': None,
 }
 
-funcs_built = {'__name__', '__doc__', '__package__', '__loader__', '__spec__', '__file__', '__cached__', '__builtins__', 'string', 'put', 'get', 'handle_lookup'}
-for func in dir(funcs):
-    if func not in funcs_built:
-        # print(type(func), funcs.__dict__[func])
-        f = NamedFunction(funcs.__dict__[func], func)
-        namespace[func] = f
+def load_all_zips():
+    zips_dir = os.path.join(os.path.dirname(__file__), 'ZIPs')
+    for subdir in os.listdir(zips_dir):
+        sub_path = os.path.join(zips_dir, subdir)
+        if not os.path.isdir(sub_path):
+            continue
+        logic_path = os.path.join(sub_path, 'logic.py')
+        if not os.path.isfile(logic_path):
+            continue
+        module_name = f'ZIPs.{subdir}.logic'
+        loader = importlib.machinery.SourceFileLoader(module_name, logic_path)
+        spec = importlib.util.spec_from_loader(module_name, loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        for attr in dir(mod):
+            if attr.startswith('_'):
+                continue
+            func = getattr(mod, attr)
+            if callable(func):
+                wrapped = NamedFunction(func, attr)
+                namespace[attr] = wrapped
+                GLOBAL_FUNCTIONS[attr] = func
+
+# 加载所有 ZIPs 逻辑函数
+load_all_zips()
 
 
 # class StateHandler(tornado.web.RequestHandler):
@@ -94,23 +117,24 @@ server_thread.start()
 
 # Create and start interactive console
 # console = code.InteractiveConsole(namespace)
-code.interact(banner="""
-Zentra Interactive python console
-Available commands:
-- put(owner, asset, var, value, key=None)  # Store state
-- get(asset, var, default=None, key=None)  # Get state
-- blocknumber()  # Current block number
-- states  # View all states
-- set_sender()  # Current sender
-- sender  # Current sender
+if __name__ == "__main__":
+    code.interact(banner="""
+    Zentra Interactive python console
+    Available commands:
+    - put(owner, asset, var, value, key=None)  # Store state
+    - get(asset, var, default=None, key=None)  # Get state
+    - blocknumber()  # Current block number
+    - states  # View all states
+    - set_sender()  # Current sender
+    - sender  # Current sender
 
-Example:
->>> put('alice', 'USDC', 'balance', 100, 'alice')
->>> get('USDC', 'balance', 0, 'alice')
-100
->>> states
-[{'asset-balance': {'alice': 100}}]
->>> nextblock()
->>> asset_create('USDC')
-Ok, let's start!
-""", local=namespace)
+    Example:
+    >>> put('alice', 'USDC', 'balance', 100, 'alice')
+    >>> get('USDC', 'balance', 0, 'alice')
+    100
+    >>> states
+    [{'asset-balance': {'alice': 100}}]
+    >>> nextblock()
+    >>> asset_create('USDC')
+    Ok, let's start!
+    """, local=namespace)
