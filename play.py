@@ -13,6 +13,15 @@ import space
 import importlib.util
 import importlib.machinery
 import os
+import hashlib
+import string
+import json
+import binascii
+try:
+    from eth_utils import keccak
+except ImportError:
+    keccak = None
+
 # 全局函数字典，供 rpc.py 使用
 GLOBAL_FUNCTIONS = {}
 import rpc
@@ -55,19 +64,32 @@ namespace = {
 }
 
 def load_all_zips():
-    zips_dir = os.path.join(os.path.dirname(__file__), 'ZIPs')
-    for subdir in os.listdir(zips_dir):
-        sub_path = os.path.join(zips_dir, subdir)
-        if not os.path.isdir(sub_path):
+    funcs_dir = os.path.join(os.path.dirname(__file__), 'funcs')
+    if not os.path.exists(funcs_dir):
+        print(f"Warning: {funcs_dir} not found.")
+        return
+    for filename in os.listdir(funcs_dir):
+        if not filename.endswith('.py') or filename == '__init__.py':
             continue
-        logic_path = os.path.join(sub_path, 'logic.py')
-        if not os.path.isfile(logic_path):
-            continue
-        module_name = f'ZIPs.{subdir}.logic'
+        logic_path = os.path.join(funcs_dir, filename)
+        module_name = f'funcs_{filename[:-3]}'
         loader = importlib.machinery.SourceFileLoader(module_name, logic_path)
         spec = importlib.util.spec_from_loader(module_name, loader)
         mod = importlib.util.module_from_spec(spec)
         loader.exec_module(mod)
+        
+        # 注入全局函数和模块
+        mod.get = space.get
+        mod.put = space.put
+        mod.event = space.event
+        mod.handle_lookup = space.handle_lookup
+        mod.hashlib = hashlib
+        mod.string = string
+        mod.json = json
+        mod.binascii = binascii
+        if keccak:
+            mod.keccak = keccak
+
         for attr in dir(mod):
             if attr.startswith('_'):
                 continue
@@ -107,17 +129,11 @@ def start_server():
     tornado.ioloop.IOLoop.current().start()
 
 
-server_thread = threading.Thread(target=start_server)
-server_thread.daemon = True  # Thread will close when main program exits
-server_thread.start()
-
-
-# Enable tab completion
-# readline.parse_and_bind("tab: complete")
-
-# Create and start interactive console
-# console = code.InteractiveConsole(namespace)
 if __name__ == "__main__":
+    server_thread = threading.Thread(target=start_server)
+    server_thread.daemon = True  # Thread will close when main program exits
+    server_thread.start()
+
     code.interact(banner="""
     Zentra Interactive python console
     Available commands:
