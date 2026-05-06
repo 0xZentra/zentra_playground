@@ -396,7 +396,7 @@ def start_server():
         # (r'/(favicon\.ico)', tornado.web.StaticFileHandler, {'path': 'static/'}),
         (r'/static/(.*)', tornado.web.StaticFileHandler, {'path': 'static/'}),
         # (r"/state", StateHandler),
-        (r'/debug/', DebugOverviewHandler),
+        (r'/debug', DebugOverviewHandler),
         (r'/debug/blocks', DebugBlocksHandler),
         (r'/debug/block/(\d+)', DebugBlockHandler),
         (r'/debug/events', DebugEventsHandler),

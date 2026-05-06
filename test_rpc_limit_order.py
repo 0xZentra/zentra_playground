@@ -29,5 +29,5 @@ if __name__ == '__main__':
     tx_hash = transaction(accounts[account_index], call_json)
     print(tx_hash)
 
-    # print('=== next block ===')
-    # next_block()
+    print('=== next block ===')
+    next_block()
