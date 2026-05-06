@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+<table>
+    <tr><th>Block</th><th>Event Count</th></tr>
+    {% for blk in blocks %}
+    <tr class="collapsible" data-target="evts_{{ blk['num'] }}">
+        <td><b>Block {{ blk['num'] }}</b></td>
+        <td>{{ blk['count'] }} events</td>
+    </tr>
+    <tr id="evts_{{ blk['num'] }}" class="content">
+        <td colspan="2">
+            <table>
+                <tr><th>Event</th><th>Args</th></tr>
+                {% for evt in blk['events'] %}
+                <tr>
+                    <td>{{ evt['event'] }}</td>
+                    <td><pre>{{ evt['args'] }}</pre></td>
+                </tr>
+                {% end %}
+            </table>
+        </td>
+    </tr>
+    {% end %}
+</table>
+{% end %}

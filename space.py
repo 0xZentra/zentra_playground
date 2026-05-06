@@ -2,7 +2,7 @@ import random
 import string
 
 latest_block_number = 0
-states = [{}]  # one state per block
+states = {}  # block_number -> {key: (addr, value)}
 blocks = {}  # block_number -> [tx_hashes]
 block_hashes = {}  # block_number -> block_hash
 transactions = {}  # tx_hash -> tx
@@ -49,7 +49,7 @@ def put(_owner, _asset, _var, _value, _key = None):
     asset_name = _asset
     addr = _owner.lower()
     k = '%s-%s' % (asset_name, var)
-    state = states[-1]
+    state = states.setdefault(latest_block_number, {})
     state[k] = addr, _value
 
 def get(_asset, _var, _default = None, _key = None):
@@ -66,7 +66,8 @@ def get(_asset, _var, _default = None, _key = None):
         var = _var
 
     k = '%s-%s' % (asset_name, var)
-    for state in reversed(states):
+    for block_num in sorted(states.keys(), reverse=True):
+        state = states[block_num]
         if k in state:
             addr, v = state[k]
             return v, addr
@@ -92,5 +93,5 @@ def nextblock():
     block_hashes[latest_block_number] = block_hash
 
     latest_block_number += 1
-    states.append({})
+    states[latest_block_number] = {}
 

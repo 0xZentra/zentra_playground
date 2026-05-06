@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block content %}
+<form>
+    <label>Filter by prefix: <input type="text" name="prefix" value="{{ prefix }}"></label>
+    <button type="submit">Filter</button>
+</form>
+<p>Showing {{ count }} entries (max {{ max_entries }}).</p>
+<table>
+    <tr><th>Key</th><th>Owner</th><th>Value</th></tr>
+    {% for entry in entries %}
+    <tr>
+        <td>{{ entry['key'] }}</td>
+        <td>{{ entry['owner'] }}</td>
+        <td>{{ entry['value'] }} (block {{ entry['block_num'] }})</td>
+    </tr>
+    {% end %}
+</table>
+{% end %}

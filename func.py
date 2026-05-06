@@ -33,7 +33,7 @@ class NamedFunction:
         return self.f.__repr__()
 
 def get_block_number():
-    return len(space.states) - 1
+    return space.latest_block_number
 
 def set_sender(sender):
     space.sender = sender.lower()

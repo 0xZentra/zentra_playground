@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block content %}
+<table>
+    <tr><th>Tx Hash</th><th>Data</th></tr>
+    {% for tx in transactions %}
+    <tr>
+        <td>{{ tx['hash'] }}</td>
+        <td><pre>{{ tx['data'] }}</pre></td>
+    </tr>
+    {% end %}
+</table>
+{% end %}

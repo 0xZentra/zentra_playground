@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Debug: {{ title }}</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #f5f5f5; }
+        h1, h2, h3 { color: #333; }
+        table { border-collapse: collapse; width: 100%; background: white; margin: 10px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background: #4CAF50; color: white; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        tr:hover { background: #e0e0e0; }
+        a { color: #0066cc; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .stats { background: white; padding: 15px; border-radius: 5px; margin: 10px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .collapsible { cursor: pointer; background: #f0f0f0; }
+        .content { display: none; }
+        input[type=text] { padding: 5px; width: 300px; margin: 5px; }
+        button { padding: 5px 10px; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 3px; }
+        button:hover { background: #45a049; }
+        pre { white-space: pre-wrap; word-wrap: break-word; }
+    </style>
+    <script>
+        function toggle(id) {
+            const el = document.getElementById(id);
+            el.style.display = el.style.display === "none" ? "block" : "none";
+        }
+        function filterTable(inputId, tableId) {
+            const input = document.getElementById(inputId);
+            const filter = input.value.toUpperCase();
+            const table = document.getElementById(tableId);
+            const trs = table.getElementsByTagName("tr");
+            for (let i = 1; i < trs.length; i++) {
+                const txt = trs[i].textContent || trs[i].innerText;
+                trs[i].style.display = txt.toUpperCase().includes(filter) ? "" : "none";
+            }
+        }
+        document.addEventListener("DOMContentLoaded", function() {
+            document.querySelectorAll(".collapsible").forEach(function(el) {
+                el.addEventListener("click", function() {
+                    const target = el.getAttribute("data-target");
+                    if (target) toggle(target);
+                });
+            });
+        });
+    </script>
+</head>
+<body>
+    <h1>Debug: {{ title }}</h1>
+    <p><a href="/debug/">Back to Overview</a></p>
+    {% block content %}{% end %}
+</body>
+</html>

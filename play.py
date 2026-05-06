@@ -9,6 +9,7 @@ try:
 except:
     pass
 
+import json
 import tornado.web
 import tornado.ioloop
 
@@ -118,7 +119,7 @@ class HistoryAPIHandler(tornado.web.RequestHandler):
         for block_num in range(start_block, end_block + 1):
             block_events = space.events.get(block_num, [])
             for evt in block_events:
-                if evt['event'] == 'TradeOrderTake' and pair in evt['args']:
+                if evt['event'] in ('TradeLimitTake', 'TradeMarketTake') and pair in evt['args']:
                     price = int(evt['args'][4])
                     if price == 0:
                         continue
@@ -215,6 +216,122 @@ class EventsAPIHandler(tornado.web.RequestHandler):
             self.finish({'tx_hash': tx_hash, 'events': [], 'chain': chain})
 
 
+# === Debug Pages ===
+
+class DebugBaseHandler(tornado.web.RequestHandler):
+    def render_debug_page(self, template_name, **kwargs):
+        self.render(f"debug/{template_name}", **kwargs)
+
+
+class DebugOverviewHandler(DebugBaseHandler):
+    def get(self):
+        total_state_entries = sum(len(s) for s in space.states.values())
+        total_events = sum(len(v) for v in space.events.values())
+        total_txs = len(space.transactions)
+
+        self.render_debug_page("overview.html",
+            title="Overview",
+            latest_block=space.latest_block_number,
+            total_blocks=len(space.blocks),
+            total_txs=total_txs,
+            total_events=total_events,
+            total_state_entries=total_state_entries
+        )
+
+
+class DebugBlocksHandler(DebugBaseHandler):
+    def get(self):
+        blocks = []
+        for blk_num in sorted(space.blocks.keys(), reverse=True)[:100]:
+            blk_hash = space.block_hashes.get(blk_num, None)
+            tx_count = len(space.blocks.get(blk_num, []))
+            evt_count = len(space.events.get(blk_num, []))
+            hash_str = (str(blk_hash)[:16] + "...") if blk_hash else "None"
+            blocks.append({
+                "num": blk_num,
+                "hash": hash_str,
+                "time": "N/A",
+                "tx_count": tx_count,
+                "evt_count": evt_count
+            })
+        self.render_debug_page("blocks.html", title="Blocks", blocks=blocks)
+
+
+class DebugBlockHandler(DebugBaseHandler):
+    def get(self, block_num):
+        blk_num = int(block_num)
+        blk_hash = space.block_hashes.get(blk_num, None)
+        txs = space.blocks.get(blk_num, [])
+        evts = space.events.get(blk_num, [])
+
+        tx_list = []
+        for tx in txs:
+            tx_hash = tx[1] if isinstance(tx, tuple) else tx
+            tx_data = space.transactions.get(tx_hash, {})
+            tx_list.append({"hash": str(tx_hash), "data": json.dumps(tx_data, indent=2)})
+
+        evt_list = []
+        for evt in evts:
+            evt_list.append({"event": str(evt.get("event")), "args": json.dumps(evt.get("args"), indent=2)})
+
+        hash_str = str(blk_hash) if blk_hash else "None"
+
+        self.render_debug_page("block.html",
+            title="Block " + str(blk_num),
+            blk_num=blk_num,
+            blk_hash=hash_str,
+            blk_time="N/A",
+            txs=tx_list,
+            evts=evt_list
+        )
+
+
+class DebugEventsHandler(DebugBaseHandler):
+    def get(self):
+        blocks = []
+        for blk_num in sorted(space.events.keys(), reverse=True):
+            evts = space.events[blk_num]
+            evt_list = []
+            for evt in evts:
+                evt_list.append({"event": str(evt.get("event")), "args": json.dumps(evt.get("args"), indent=2)})
+            blocks.append({"num": blk_num, "count": len(evts), "events": evt_list})
+        self.render_debug_page("events.html", title="Events", blocks=blocks)
+
+
+class DebugStateHandler(DebugBaseHandler):
+    def get(self):
+        prefix = self.get_argument("prefix", "")
+        entries = []
+        count = 0
+        max_entries = 500
+        for block_num in sorted(space.states.keys(), reverse=True):
+            state = space.states[block_num]
+            for key in sorted(state.keys()):
+                if prefix and not key.startswith(prefix):
+                    continue
+                addr, value = state[key]
+                entries.append({"key": str(key), "owner": str(addr), "value": str(value), "block_num": block_num})
+                count += 1
+                if count >= max_entries:
+                    break
+            if count >= max_entries:
+                break
+        self.render_debug_page("state.html",
+            title="State Browser",
+            prefix=prefix,
+            entries=entries,
+            count=count,
+            max_entries=max_entries
+        )
+
+
+class DebugTransactionsHandler(DebugBaseHandler):
+    def get(self):
+        transactions = []
+        for tx_hash, tx_data in sorted(space.transactions.items()):
+            transactions.append({"hash": str(tx_hash), "data": json.dumps(tx_data, indent=2)})
+        self.render_debug_page("transactions.html", title="Transactions", transactions=transactions)
+
 
 # class EventsAPIHandler(tornado.web.RequestHandler):
 #     def get(self):
@@ -279,13 +396,19 @@ def start_server():
         # (r'/(favicon\.ico)', tornado.web.StaticFileHandler, {'path': 'static/'}),
         (r'/static/(.*)', tornado.web.StaticFileHandler, {'path': 'static/'}),
         # (r"/state", StateHandler),
+        (r'/debug/', DebugOverviewHandler),
+        (r'/debug/blocks', DebugBlocksHandler),
+        (r'/debug/block/(\d+)', DebugBlockHandler),
+        (r'/debug/events', DebugEventsHandler),
+        (r'/debug/state', DebugStateHandler),
+        (r'/debug/transactions', DebugTransactionsHandler),
         (r"/", rpc.RPCHandler),
         (r'/api/get_latest_state', GetLatestStateAPIHandler),
         (r'/api/query_recent_state', QueryRecentStateAPIHandler),
         (r'/api/orderbook', OrderbookAPIHandler),
         (r'/api/history', HistoryAPIHandler),
         (r'/api/events', EventsAPIHandler),
-    ])
+    ], template_path="templates")
     app.listen(8545)
     tornado.ioloop.IOLoop.current().start()
 
@@ -298,6 +421,10 @@ if __name__ == "__main__":
         readline.parse_and_bind("tab: complete")
     except:
         pass
+
+    print("Server started at http://127.0.0.1:8545")
+    print("Debug page: http://127.0.0.1:8545/debug/")
+    print()
 
     code.interact(banner="""
     Zentra Interactive python console
@@ -315,7 +442,7 @@ if __name__ == "__main__":
     >>> get('USDC', 'balance', 0, 'alice')
     100
     >>> states
-    [{'asset-balance': {'alice': 100}}]
+    {0: {'asset-balance': ('alice', 100)}}
     >>> nextblock()
     >>> setsender(a[0])
     >>> asset_create('USDC')

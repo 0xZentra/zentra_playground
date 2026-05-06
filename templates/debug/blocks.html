@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block content %}
+<input type="text" id="filterInput" onkeyup="filterTable('filterInput', 'blocksTable')" placeholder="Filter blocks...">
+<table id="blocksTable">
+    <tr><th>Block #</th><th>Hash</th><th>Time</th><th>Tx Count</th><th>Event Count</th></tr>
+    {% for blk in blocks %}
+    <tr>
+        <td><a href="/debug/block/{{ blk['num'] }}">{{ blk['num'] }}</a></td>
+        <td>{{ blk['hash'] }}</td>
+        <td>{{ blk['time'] }}</td>
+        <td>{{ blk['tx_count'] }}</td>
+        <td>{{ blk['evt_count'] }}</td>
+    </tr>
+    {% end %}
+</table>
+{% end %}
