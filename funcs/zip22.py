@@ -233,7 +233,7 @@ def trade_market_order(info, args):
         buy_or_sell = 'sell'
         base_value = int(args['a'][1])
         base_balance, _ = get(base_tick, 'balance', 0, addr)
-        base_sum = 0
+        # base_sum = 0
 
         trade_buy_id = trade_buy_start
         while True:
@@ -246,15 +246,14 @@ def trade_market_order(info, args):
             dx_quote = dx_base * price // K
             if dx_base == 0 or dx_quote == 0:
                 break
+            if base_balance - dx_base < 0:
+                break
             buy[1] -= dx_base
             buy[2] += dx_quote
             take_base += dx_base
             take_quote += dx_quote
-
-            if base_balance - dx_base < 0:
-                break
             base_balance -= dx_base
-            base_sum += dx_base
+            # base_sum += dx_base
 
             if buy[1] == 0 or buy[1] // price == 0:
                 trade_buy_start = _remove_order(addr, pair, buy, trade_buy_start, 'buy')
@@ -286,7 +285,7 @@ def trade_market_order(info, args):
             trade_buy_id = buy[4]
 
         balance, _ = get(base_tick, 'balance', 0, addr)
-        balance -= base_sum
+        balance -= take_base
         assert balance >= 0
         put(addr, base_tick, 'balance', balance, addr)
 
@@ -294,7 +293,7 @@ def trade_market_order(info, args):
         buy_or_sell = 'buy'
         base_value = int(args['a'][1])
         quote_balance, _ = get(quote_tick, 'balance', 0, addr)
-        quote_sum = 0
+        # quote_sum = 0
 
         trade_sell_id = trade_sell_start
         while True:
@@ -307,15 +306,15 @@ def trade_market_order(info, args):
             dx_quote = dx_base * price // K
             if dx_base == 0 or dx_quote == 0:
                 break
+            if quote_balance - dx_quote < 0:
+                break
+
             sell[1] += dx_base
             sell[2] -= dx_quote
             take_base += dx_base
             take_quote += dx_quote
-
-            if quote_balance - dx_quote < 0:
-                break
             quote_balance -= dx_quote
-            quote_sum += dx_quote
+            # quote_sum += dx_quote
 
             if sell[1] == 0 or sell[1] // price == 0:
                 trade_sell_start = _remove_order(addr, pair, sell, trade_sell_start, 'sell')
@@ -347,7 +346,7 @@ def trade_market_order(info, args):
             trade_sell_id = sell[4]
 
         balance, _ = get(quote_tick, 'balance', 0, addr)
-        balance -= quote_sum
+        balance -= take_quote
         assert balance >= 0
         put(addr, quote_tick, 'balance', balance, addr)
 
@@ -355,7 +354,7 @@ def trade_market_order(info, args):
         buy_or_sell = 'buy'
         quote_value = int(args['a'][3])
         quote_balance, _ = get(quote_tick, 'balance', 0, addr)
-        quote_sum = 0
+        # quote_sum = 0
 
         trade_sell_id = trade_sell_start
         while True:
@@ -368,15 +367,15 @@ def trade_market_order(info, args):
             dx_quote = dx_base * price // K
             if dx_base == 0 or  dx_quote == 0:
                 break
+            if quote_balance - dx_quote < 0:
+                break
+
             sell[1] += dx_base
             sell[2] -= dx_quote
             take_base += dx_base
             take_quote += dx_quote
-
-            if quote_balance - dx_quote < 0:
-                break
             quote_balance -= dx_quote
-            quote_sum += dx_quote
+            # quote_sum += dx_quote
 
             if sell[1] == 0 or sell[1] // price == 0:
                 trade_sell_start = _remove_order(addr, pair, sell, trade_sell_start, 'sell')
@@ -408,7 +407,7 @@ def trade_market_order(info, args):
             trade_sell_id = sell[4]
 
         balance, _ = get(quote_tick, 'balance', 0, addr)
-        balance -= quote_sum
+        balance -= take_quote
         assert balance >= 0
         put(addr, quote_tick, 'balance', balance, addr)
 
@@ -416,7 +415,7 @@ def trade_market_order(info, args):
         buy_or_sell = 'sell'
         quote_value = int(args['a'][3])
         base_balance, _ = get(base_tick, 'balance', 0, addr)
-        base_sum = 0
+        # base_sum = 0
 
         trade_buy_id = trade_buy_start
         while True:
@@ -429,15 +428,15 @@ def trade_market_order(info, args):
             dx_quote = dx_base * price // K
             if dx_base == 0 or dx_quote == 0:
                 break
+            if base_balance - dx_base < 0:
+                break
+
             buy[1] -= dx_base
             buy[2] += dx_quote
             take_base += dx_base
             take_quote += dx_quote
-
-            if base_balance - dx_base < 0:
-                break
             base_balance -= dx_base
-            base_sum += dx_base
+            # base_sum += dx_base
 
             if buy[1] == 0 or buy[1] // price == 0:
                 trade_buy_start = _remove_order(addr, pair, buy, trade_buy_start, 'buy')
@@ -469,7 +468,7 @@ def trade_market_order(info, args):
             trade_buy_id = buy[4]
 
         balance, _ = get(base_tick, 'balance', 0, addr)
-        balance -= base_sum
+        balance -= take_base
         assert balance >= 0
         put(addr, base_tick, 'balance', balance, addr)
 

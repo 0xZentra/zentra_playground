@@ -10,15 +10,8 @@ from test_rpc_init import *
 from setting import accounts
 
 if __name__ == '__main__':
-    # Buy order: spend USDC to get BTC (base_amount negative means buying)
-    # [base_token, base_amount, quote_token, quote_amount]
-    # Buy: base_amount is negative (selling quote to get base)
-    # Sell: quote_amount is negative (selling base to get quote)
-    
-    # Buy 0.1 BTC at price 50000 USDC (spend 5000 USDC)
-    # base_amount = -0.1 BTC, quote_amount = 5000 USDC
     account_index = int(sys.argv[1])
-    print(account_index)
+    print(account_index, accounts[account_index].address.lower())
     btc_value = float(sys.argv[2])
     print(btc_value)
     usdc_value = float(sys.argv[3])
