@@ -4,7 +4,7 @@
 <h3>Block #{{ blk_num }}</h3>
 <p><b>Hash:</b> {{ blk_hash }}</p>
 <p><b>Time:</b> {{ blk_time }}</p>
-<h4>Transactions ({{ txs|length }})</h4>
+    <h4>Transactions ({{ len(txs) }})</h4>
 <table>
     <tr><th>Tx Hash</th><th>Data</th></tr>
     {% for tx in txs %}
@@ -14,7 +14,7 @@
     </tr>
     {% end %}
 </table>
-<h4>Events ({{ evts|length }})</h4>
+    <h4>Events ({{ len(evts) }})</h4>
 <table>
     <tr><th>Event</th><th>Args</th></tr>
     {% for evt in evts %}

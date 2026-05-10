@@ -2,11 +2,7 @@ import { ethers } from "https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.2/eth
 
 let rc = React.createElement;
 const LightweightCharts = window.LightweightCharts;
-// const TESTNET_INDEXER_URL = 'https://testnet3.zentra.dev';
-// const TESTNET_INDEXER_URL = 'http://127.0.0.1:8090';
 const TESTNET_INDEXER_URL = 'http://127.0.0.1:8545';
-const CHAIN = 'base';
-// const CHAIN = 'cto';
 const BASE_TOKEN = 'BTC';
 const QUOTE_TOKEN = 'USDC';
 
@@ -31,7 +27,7 @@ class Header extends React.Component {
 
   render() {
     const { ethAddress, walletLoading } = this.props.walletState;
-    return rc('header', { className: 'header p-4 flex justify-between items-center bg-gray-800 text-white' },
+    return rc('header', { className: 'header p-4 flex items-center bg-gray-800 text-white' },
       rc('div', { className: 'logo flex items-center' },
         rc('img', { src: 'logo.svg', alt: 'Logo', className: 'h-8 w-8 mr-2' }),
         rc('span', { className: 'text-xl font-bold' }, 'OrderBook')
@@ -43,11 +39,14 @@ class Header extends React.Component {
           rc('li', null, rc('a', { href: '#', className: 'hover:text-gray-400' }, 'Contact'))
         )
       ),
-      rc('div', { className: 'login' },
+      rc('div', { className: 'login ml-auto flex items-center gap-2' },
         walletLoading ?
           null :
           (ethAddress ?
-            rc('span', { className: 'font-mono' }, `${ethAddress.substring(0, 6)}...${ethAddress.substring(ethAddress.length - 4)}`) :
+            rc('div', { className: 'flex items-center gap-2' },
+              rc('span', { className: 'font-mono text-sm' }, `${ethAddress.substring(0, 6)}...${ethAddress.substring(ethAddress.length - 4)}`),
+              rc('button', { onClick: this.props.handleWalletLogout, className: 'bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-3 rounded text-sm' }, 'Logout')
+            ) :
             rc('button', { onClick: this.props.handleWalletLogin, className: 'bg-gray-200 hover:bg-gray-400 text-black font-bold py-2 px-4 rounded' }, 'Connect Wallet'))
       )
     );
@@ -57,18 +56,57 @@ class Header extends React.Component {
 class ChartPanel extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { history: [] };
+    this.state = { history: [], interval: '1s', localCandles: [] };
     this.chart = null;
     this.candleSeries = null;
     this.chartRef = React.createRef();
+    this.timer = null;
   }
 
   componentDidMount() {
     this.initChart();
     this.loadHistory();
+    this.startAutoRefresh();
   }
 
-initChart() {
+  componentWillUnmount() {
+    if (this.timer) clearInterval(this.timer);
+  }
+
+  startAutoRefresh = () => {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = setInterval(() => {
+      const { localCandles, interval } = this.state;
+      if (!localCandles.length) return;
+
+      const intervalSec = {
+        '1s': 1, '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400
+      }[interval] || 3600;
+
+      const now = Math.floor(Date.now() / 1000);
+      const bucket = Math.floor(now / intervalSec) * intervalSec;
+      const lastCandle = localCandles[localCandles.length - 1];
+
+      if (bucket > lastCandle.time) {
+        const newCandle = {
+          time: bucket,
+          open: lastCandle.close,
+          high: lastCandle.close,
+          low: lastCandle.close,
+          close: lastCandle.close,
+          volume: 0,
+          is_filled: true
+        };
+        const newCandles = [...localCandles, newCandle];
+        this.setState({ localCandles: newCandles });
+        if (this.candleSeries) {
+          this.candleSeries.setData(newCandles);
+        }
+      }
+    }, 1000);
+  }
+
+  initChart() {
     if (!this.chartRef.current) return;
     this.chart = LightweightCharts.createChart(this.chartRef.current, {
       width: this.chartRef.current.offsetWidth || 600,
@@ -87,26 +125,189 @@ initChart() {
     });
   }
 
-
   loadHistory = async () => {
+    const { interval } = this.state;
     try {
-      const response = await fetch(`${TESTNET_INDEXER_URL}/api/history?base=BTC&quote=USDC`);
+      const response = await fetch(`${TESTNET_INDEXER_URL}/api/history?base=${BASE_TOKEN}&quote=${QUOTE_TOKEN}&interval=${interval}`);
       const data = await response.json();
       const candles = data.candles || [];
-      
+
       if (this.candleSeries && candles.length > 0) {
         this.candleSeries.setData(candles);
       }
-      this.setState({ history: candles });
+      this.setState({ history: candles, localCandles: candles });
     } catch (error) {
       console.error('Failed to load history:', error);
     }
-  } 
+  }
+
+  handleIntervalChange = (interval) => {
+    this.setState({ interval }, () => {
+      this.loadHistory();
+    });
+  }
+
+  componentDidUpdate(prevProps, prevState) {
+    if (this.state.interval !== prevState.interval) {
+      this.loadHistory();
+    }
+    if (this.props.streamTrades !== prevProps.streamTrades && this.props.streamTrades) {
+      this.updateCandlesWithTrades(this.props.streamTrades);
+    }
+  }
+
+  updateCandlesWithTrades = (trades) => {
+    const { interval } = this.state;
+    const intervalSec = {
+      '1s': 1, '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400
+    }[interval] || 3600;
+
+    let { localCandles } = this.state;
+
+    if (!this.candleSeries) {
+      console.error('candleSeries is null!');
+      return;
+    }
+
+    const MAX_CANDLES = { '1s': 300, '1m': 300, '5m': 300, '15m': 300, '1h': 200, '1d': 100 }[interval] || 300;
+
+    let updatedIdx = -1;
+
+    for (const trade of trades) {
+      const tradeTime = trade.timestamp || Math.floor(Date.now() / 1000);
+      const bucket = Math.floor(tradeTime / intervalSec) * intervalSec;
+
+      if (!localCandles.length) {
+        const firstCandle = {
+          time: bucket,
+          open: trade.price,
+          high: trade.price,
+          low: trade.price,
+          close: trade.price,
+          volume: (trade.amount || 0),
+          is_filled: false
+        };
+        localCandles = [firstCandle];
+        continue;
+      }
+
+      let foundIdx = -1;
+      for (let i = localCandles.length - 1; i >= 0; i--) {
+        if (localCandles[i].time === bucket) {
+          foundIdx = i;
+          break;
+        }
+        if (localCandles[i].time < bucket) break;
+      }
+
+      if (foundIdx >= 0) {
+        const oldC = localCandles[foundIdx];
+        localCandles[foundIdx] = {
+          ...oldC,
+          high: Math.max(oldC.high, trade.price),
+          low: Math.min(oldC.low, trade.price),
+          close: trade.price,
+          volume: (oldC.volume || 0) + (trade.amount || 0),
+          is_filled: false
+        };
+        updatedIdx = foundIdx;
+
+      } else if (bucket > localCandles[localCandles.length - 1].time) {
+        const newC = {
+          time: bucket,
+          open: trade.price,
+          high: trade.price,
+          low: trade.price,
+          close: trade.price,
+          volume: (trade.amount || 0),
+          is_filled: false
+        };
+        localCandles = [...localCandles, newC];
+        updatedIdx = localCandles.length - 1;
+
+      } else if (bucket < localCandles[0].time) {
+        const newC = {
+          time: bucket,
+          open: trade.price,
+          high: trade.price,
+          low: trade.price,
+          close: trade.price,
+          volume: (trade.amount || 0),
+          is_filled: false
+        };
+        localCandles = [newC, ...localCandles];
+        updatedIdx = 0;
+
+      } else {
+        let insertIdx = localCandles.length;
+        for (let i = 0; i < localCandles.length; i++) {
+          if (localCandles[i].time > bucket) {
+            insertIdx = i;
+            break;
+          }
+        }
+        const newC = {
+          time: bucket,
+          open: trade.price,
+          high: trade.price,
+          low: trade.price,
+          close: trade.price,
+          volume: (trade.amount || 0),
+          is_filled: false
+        };
+        localCandles = [
+          ...localCandles.slice(0, insertIdx),
+          newC,
+          ...localCandles.slice(insertIdx)
+        ];
+        updatedIdx = insertIdx;
+      }
+    }
+
+    if (localCandles.length > MAX_CANDLES) {
+      localCandles = localCandles.slice(-MAX_CANDLES);
+    }
+
+    if (localCandles.length > 1) {
+      for (let i = 1; i < localCandles.length; i++) {
+        localCandles[i].open = localCandles[i-1].close;
+      }
+    }
+
+    if (updatedIdx >= 0) {
+      for (let i = updatedIdx + 1; i < localCandles.length; i++) {
+        if (localCandles[i].is_filled) {
+          localCandles[i].open = localCandles[i-1].close;
+          localCandles[i].close = localCandles[i-1].close;
+          localCandles[i].high = localCandles[i-1].close;
+          localCandles[i].low = localCandles[i-1].close;
+        }
+        if (!localCandles[i].is_filled) {
+          break;
+        }
+      }
+    }
+
+    this.candleSeries.setData(localCandles);
+    this.setState({ localCandles });
+  }
 
   render() {
-    const { history } = this.state;
+    const { history, interval } = this.state;
+    const intervals = ['1s', '1m', '5m', '15m', '1h', '1d'];
     return rc('div', { className: 'chart-panel bg-gray-900 p-4 rounded-lg' },
-      rc('h2', { className: 'text-lg font-bold text-white mb-2' }, `Market Chart (${history.length} trades)`),
+      rc('div', { className: 'flex justify-between items-center mb-2' },
+        rc('h2', { className: 'text-lg font-bold text-white' }, `Market Chart (${history.length} trades)`),
+        rc('div', { className: 'flex gap-1' },
+          intervals.map(iv =>
+            rc('button', {
+              key: iv,
+              onClick: () => this.handleIntervalChange(iv),
+              className: `px-2 py-1 text-xs rounded ${interval === iv ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`
+            }, iv)
+          )
+        )
+      ),
       rc('div', { ref: this.chartRef, className: 'w-full' })
     );
   }
@@ -156,7 +357,7 @@ class MarketPanel extends React.Component {
     return rc('div', { className: 'order-book text-white' },
       rc('div', { className: 'flex justify-between text-xs text-gray-400 p-2' },
         rc('span', null, 'Price (USDC)'),
-        rc('span', null, `Size (BTC)`),
+        rc('span', null, `Size (${BASE_TOKEN})`),
       ),
       rc('div', { className: 'asks' },
         asks.slice(0, 10).reverse().map((ask, index) =>
@@ -180,7 +381,7 @@ class MarketPanel extends React.Component {
 
   renderTrades() {
     const { trades } = this.props;
-    if (!trades || trades.length === 0) {
+    if (!Array.isArray(trades) || trades.length === 0) {
       return rc('div', { className: 'trades text-white text-center p-4' }, 'No recent trades.');
     }
 
@@ -188,16 +389,19 @@ class MarketPanel extends React.Component {
       rc('div', { className: 'flex justify-between text-xs text-gray-400 p-2 sticky top-0 bg-gray-900' },
         rc('span', { className: 'w-1/3' }, 'Time'),
         rc('span', { className: 'w-1/3 text-right' }, 'Price (USDC)'),
-        rc('span', { className: 'w-1/3 text-right' }, 'Size (BTC)'),
+        rc('span', { className: 'w-1/3 text-right' }, `Size (${BASE_TOKEN})`),
       ),
       rc('div', { className: 'trade-list' },
-        trades.map((trade, index) =>
-          rc('div', { key: index, className: `flex justify-between p-1 ${trade.side === 'buy' ? 'text-green-500' : 'text-red-500'}` },
-            rc('span', { className: 'w-1/3 font-mono' }, new Date(trade.timestamp * 1000).toLocaleTimeString()),
-            rc('span', { className: 'w-1/3 text-right font-mono' }, trade.price.toFixed(2)),
-            rc('span', { className: 'w-1/3 text-right font-mono' }, trade.base_amount.toFixed(6)),
-          )
-        )
+        trades.map((trade, index) => {
+          const price = Number(trade.price) || 0;
+          const amount = Number(trade.amount || trade.base_amount) || 0;
+          const timeStr = trade.timestamp ? new Date(trade.timestamp * 1000).toLocaleTimeString() : '-';
+          return rc('div', { key: index, className: `flex justify-between p-1 ${trade.side === 'buy' ? 'text-green-500' : 'text-red-500'}` },
+            rc('span', { className: 'w-1/3 font-mono' }, timeStr),
+            rc('span', { className: 'w-1/3 text-right font-mono' }, price > 0 ? price.toFixed(2) : '-'),
+            rc('span', { className: 'w-1/3 text-right font-mono' }, amount > 0 ? amount.toFixed(6) : '-'),
+          );
+        })
       )
     );
   }
@@ -224,7 +428,7 @@ class OrderPanel extends React.Component {
       price: '68000',
       size: '',
       rangeValue: '0',
-      sizeUnit: 'BTC', // BTC or USDC
+      sizeUnit: 'BTC',
       balance: {
         BTC: 0,
         USDC: 0
@@ -256,10 +460,7 @@ class OrderPanel extends React.Component {
     const address = await signer.getAddress();
 
     const tokens = ['USDC', 'BTC'];
-    const decimals = {
-      'USDC': 6,
-      'BTC': 18
-    }
+    const decimals = { 'USDC': 6, 'BTC': 18 };
 
     tokens.forEach(async (token) => {
       if (!token || !decimals[token]) return;
@@ -288,19 +489,35 @@ class OrderPanel extends React.Component {
 
   handleRangeChange = (e) => {
     const percentage = e.target.value;
-    const { tradeType, balance, price, sizeUnit } = this.state;
+    const { tradeType, balance, price, sizeUnit, activeTab } = this.state;
     const for_token = 'BTC';
     let newSize = '';
 
-    if (tradeType === 'Buy') {
-      const budget = balance.USDC * (percentage / 100);
-      if (price > 0) {
-        newSize = sizeUnit === for_token ? (budget / price).toFixed(6) : budget.toFixed(2);
+    if (activeTab === 'Market') {
+      if (tradeType === 'Buy') {
+        if (sizeUnit === for_token) {
+          newSize = (balance.USDC / (price || 1) * (percentage / 100)).toFixed(6);
+        } else {
+          newSize = (balance.USDC * (percentage / 100)).toFixed(2);
+        }
+      } else {
+        if (sizeUnit === for_token) {
+          newSize = (balance[for_token] * (percentage / 100)).toFixed(6);
+        } else {
+          newSize = (balance[for_token] * (price || 1) * (percentage / 100)).toFixed(2);
+        }
       }
-    } else { // Sell
-      const amount = balance[for_token] * (percentage / 100);
-      if (price > 0) {
-        newSize = sizeUnit === for_token ? amount.toFixed(6) : (amount * price).toFixed(2);
+    } else {
+      if (tradeType === 'Buy') {
+        const budget = balance.USDC * (percentage / 100);
+        if (price > 0) {
+          newSize = sizeUnit === for_token ? (budget / price).toFixed(6) : budget.toFixed(2);
+        }
+      } else {
+        const amount = balance[for_token] * (percentage / 100);
+        if (price > 0) {
+          newSize = sizeUnit === for_token ? amount.toFixed(6) : (amount * price).toFixed(2);
+        }
       }
     }
 
@@ -343,17 +560,17 @@ class OrderPanel extends React.Component {
         alert('Please enter a valid size and price');
         return;
       }
-      if (sizeUnit === for_token) { // size is in base token
+      if (sizeUnit === for_token) {
         base_amount = ethers.parseUnits(size, base_decimals);
         quote_amount = ethers.parseUnits((parseFloat(size) * parseFloat(price)).toString(), quote_decimals);
-      } else { // size is in USDC
+      } else {
         quote_amount = ethers.parseUnits(size, quote_decimals);
         base_amount = ethers.parseUnits((parseFloat(size) / parseFloat(price)).toString(), base_decimals);
       }
 
       if (tradeType === 'Buy') {
         quote_amount = -quote_amount;
-      } else { // Sell
+      } else {
         base_amount = -base_amount;
       }
 
@@ -363,18 +580,27 @@ class OrderPanel extends React.Component {
         'a': [for_token, base_amount.toString(), quote_token, quote_amount.toString()]
       };
 
-    } else { // Market
+    } else {
       if (!size || isNaN(parseFloat(size)) || parseFloat(size) <= 0) {
         alert('Please enter a valid size');
         return;
       }
       if (tradeType === 'Buy') {
-        // Market buy is specified by quote amount to spend
-        quote_amount = -ethers.parseUnits(size, quote_decimals);
-        base_amount = null;
-      } else { // Market sell is specified by base amount to sell
-        base_amount = -ethers.parseUnits(size, base_decimals);
-        quote_amount = null;
+        if (sizeUnit === for_token) {
+          base_amount = ethers.parseUnits(size, base_decimals);
+          quote_amount = null;
+        } else {
+          quote_amount = -ethers.parseUnits(size, quote_decimals);
+          base_amount = null;
+        }
+      } else {
+        if (sizeUnit === for_token) {
+          base_amount = -ethers.parseUnits(size, base_decimals);
+          quote_amount = null;
+        } else {
+          quote_amount = ethers.parseUnits(size, quote_decimals);
+          base_amount = null;
+        }
       }
 
       calldata = {
@@ -402,12 +628,16 @@ class OrderPanel extends React.Component {
     const tradeTypeClass = this.state.tradeType === 'Buy' ? 'bg-green-500 hover:bg-green-700' : 'bg-red-500 hover:bg-red-700';
     const balanceToShow = this.state.tradeType === 'Buy' ? `${this.state.balance.USDC.toFixed(2)} USDC` : `${(this.state.balance.BTC || 0).toFixed(4)} BTC`;
     let total = 0;
-    if (this.state.price > 0 && this.state.size > 0) {
-      if (this.state.sizeUnit === 'BTC') {
-        total = this.state.price * this.state.size;
-      } else {
-        total = parseFloat(this.state.size);
+    if (this.state.activeTab === 'Limit') {
+      if (this.state.price > 0 && this.state.size > 0) {
+        if (this.state.sizeUnit === 'BTC') {
+          total = this.state.price * this.state.size;
+        } else {
+          total = parseFloat(this.state.size);
+        }
       }
+    } else {
+      total = parseFloat(this.state.size) || 0;
     }
 
     return rc('div', { className: 'order-panel bg-gray-900 p-4 rounded-lg text-white', style: { minWidth: '300px', height: '100%' } },
@@ -415,7 +645,7 @@ class OrderPanel extends React.Component {
         rc('button', { className: `px-4 py-2 ${this.state.activeTab === 'Market' ? 'border-b-2 border-blue-500' : ''}`, onClick: () => this.handleTabChange('Market') }, 'Market'),
         rc('button', { className: `px-4 py-2 ${this.state.activeTab === 'Limit' ? 'border-b-2 border-blue-500' : ''}`, onClick: () => this.handleTabChange('Limit') }, 'Limit')
       ),
-      rc('div', { className: 'flex mt-4' },
+      rc('div', { className: 'flex mt-4 gap-2' },
         rc('button', { className: `flex-1 py-2 ${this.state.tradeType === 'Buy' ? 'bg-green-600' : 'bg-gray-700'}`, onClick: () => this.handleTradeTypeChange('Buy') }, 'Buy'),
         rc('button', { className: `flex-1 py-2 ${this.state.tradeType === 'Sell' ? 'bg-red-600' : 'bg-gray-700'}`, onClick: () => this.handleTradeTypeChange('Sell') }, 'Sell')
       ),
@@ -426,8 +656,11 @@ class OrderPanel extends React.Component {
         ),
         this.state.activeTab === 'Market' && rc('div', { className: 'market-tab space-y-4' },
           rc('div', null,
-            rc('label', { className: 'block text-sm text-gray-400' }, 'Size'),
-            rc('input', { type: 'text', name: 'size', value: this.state.size, onChange: this.handleInputChange, placeholder: 'Enter size', className: 'w-full p-2 bg-gray-800 border border-gray-700 rounded' })
+            rc('div', { className: 'flex justify-between items-center' },
+              rc('label', { className: 'block text-sm text-gray-400' }, 'Size'),
+              rc('button', { onClick: this.handleSizeUnitChange, className: 'text-sm text-blue-400 hover:text-blue-300' }, `in ${this.state.sizeUnit}`)
+            ),
+            rc('input', { type: 'text', name: 'size', value: this.state.size, onChange: this.handleInputChange, placeholder: `Enter size in ${this.state.sizeUnit}`, className: 'w-full p-2 bg-gray-800 border border-gray-700 rounded' })
           )
         ),
         this.state.activeTab === 'Limit' && rc('div', { className: 'limit-tab space-y-4' },
@@ -579,7 +812,6 @@ class ToolPanel extends React.Component {
   }
 }
 
-
 class App extends React.Component {
   constructor(props) {
     super(props);
@@ -598,11 +830,30 @@ class App extends React.Component {
     this.reconnectTimeout = null;
   }
 
+  componentDidMount() {
+    window.addEventListener('resize', this.handleResize);
+    this.initializeWallet();
+    this.loadInitialMarketData();
+
+    if (window.ethereum) {
+      window.ethereum.on('accountsChanged', (accounts) => {
+        this.initializeWallet();
+      });
+    }
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener('resize', this.handleResize);
+    this.teardownStream();
+    if (window.ethereum && window.ethereum.removeListener) {
+      window.ethereum.removeListener('accountsChanged', this.initializeWallet);
+    }
+  }
+
   loadInitialMarketData = async () => {
     try {
       const response = await fetch(`${TESTNET_INDEXER_URL}/api/orderbook?base=${BASE_TOKEN}&quote=${QUOTE_TOKEN}`);
       const data = await response.json();
-      // console.log('Orderbook data:', data);
       this.setState(
         {
           orderbook: { buys: data.buys, sells: data.sells },
@@ -615,7 +866,6 @@ class App extends React.Component {
     }
   }
 
-  // Function for the initial silent check and for handling account changes
   initializeWallet = async () => {
     if (typeof window.ethereum === 'undefined') {
       this.setState({ walletLoading: false });
@@ -630,32 +880,6 @@ class App extends React.Component {
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
         this.setState({ ethAddress, provider, signer });
-
-        try {
-          const chainId = await window.ethereum.request({ method: 'eth_chainId' });
-          if (chainId !== '0x7a69') {
-            try {
-              await window.ethereum.request({
-                method: 'wallet_switchEthereumChain',
-                params: [{ chainId: '0x7a69' }],
-              });
-            } catch (switchError) {
-              if (switchError.code === 4902) {
-                await window.ethereum.request({
-                  method: 'wallet_addEthereumChain',
-                  params: [{
-                    chainId: '0x7a69',
-                    chainName: 'Local Testnet',
-                    rpcUrls: ['http://127.0.0.1:8545'],
-                    nativeCurrency: { name: 'Ethereum', symbol: 'ETH', decimals: 18 },
-                  }],
-                });
-              }
-            }
-          }
-        } catch (e) {
-          console.error('Failed to switch chain:', e);
-        }
       } else {
         this.setState({ ethAddress: null, provider: null, signer: null });
       }
@@ -666,7 +890,6 @@ class App extends React.Component {
     }
   }
 
-  // Function for the user explicitly clicking the "Connect Wallet" button
   handleWalletLogin = async () => {
     if (typeof window.ethereum === 'undefined') {
       alert('Wallet not installed!');
@@ -681,68 +904,19 @@ class App extends React.Component {
       const signer = await provider.getSigner();
 
       this.setState({ ethAddress, provider, signer, walletLoading: false });
-
-      try {
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: '0x7a69' }],
-        });
-      } catch (switchError) {
-        if (switchError.code === 4902) {
-          try {
-            await window.ethereum.request({
-              method: 'wallet_addEthereumChain',
-              params: [{
-                chainId: '0x7a69',
-                chainName: 'Local Testnet',
-                rpcUrls: ['http://127.0.0.1:8545'],
-                nativeCurrency: {
-                  name: 'Ethereum',
-                  symbol: 'ETH',
-                  decimals: 18,
-                },
-              }],
-            });
-          } catch (addError) {
-            console.error('Failed to add Base Sepolia Testnet:', addError);
-            alert('Failed to add Base Sepolia Testnet.');
-          }
-        } else {
-          console.error('Failed to switch to Base Sepolia Testnet:', switchError);
-          alert('Failed to switch to Base Sepolia Testnet.');
-        }
-      }
     } catch (error) {
       console.error('Error logging in:', error);
       this.setState({ walletLoading: false });
     }
   }
 
-  componentDidMount() {
-    window.addEventListener('resize', this.handleResize);
-    this.initializeWallet();
-    this.loadInitialMarketData();
-
-    this.orderbookInterval = setInterval(() => {
-      this.loadInitialMarketData();
-    }, 3000);
-
-    if (window.ethereum) {
-      window.ethereum.on('accountsChanged', (accounts) => {
-        this.initializeWallet();
-      });
-    }
-  }
-
-  componentWillUnmount() {
-    window.removeEventListener('resize', this.handleResize);
-    this.teardownStream();
-    if (this.orderbookInterval) {
-      clearInterval(this.orderbookInterval);
-    }
-    if (window.ethereum && window.ethereum.removeListener) {
-      window.ethereum.removeListener('accountsChanged', this.initializeWallet);
-    }
+  handleWalletLogout = async () => {
+    this.setState({
+      ethAddress: null,
+      provider: null,
+      signer: null,
+      walletLoading: false
+    });
   }
 
   handleResize = () => {
@@ -751,16 +925,9 @@ class App extends React.Component {
     });
   }
 
-  handleIntervalChange = () => {
-    this.loadInitialMarketData();
-  }
-
   startStream = () => {
     if (this.ws) return;
-    const lastBlockHeight = this.state.lastBlock ? this.state.lastBlock.height : null;
-    if (lastBlockHeight === null || lastBlockHeight === undefined) return;
-    const wsUrl = `${TESTNET_INDEXER_URL.replace(/^http/, 'ws')}/api/stream?base=${BASE_TOKEN}&quote=${QUOTE_TOKEN}` +
-      (lastBlockHeight ? `&start_block=${lastBlockHeight}` : '');
+    const wsUrl = TESTNET_INDEXER_URL.replace(/^http/, 'ws') + '/ws';
 
     try {
       this.ws = new WebSocket(wsUrl);
@@ -768,6 +935,8 @@ class App extends React.Component {
       console.error('Failed to open websocket:', err);
       return;
     }
+
+    this.ws.onopen = () => console.log('WebSocket connected');
 
     this.ws.onmessage = (event) => {
       try {
@@ -783,6 +952,8 @@ class App extends React.Component {
     };
 
     this.ws.onclose = () => {
+      console.log('WebSocket disconnected, reconnecting...');
+      this.ws = null;
       this.scheduleReconnect();
     };
   }
@@ -830,6 +1001,20 @@ class App extends React.Component {
       }
     }
 
+    if (payload.type === 'trade' && payload.price !== undefined) {
+      const trade = {
+        price: payload.price,
+        amount: payload.amount,
+        timestamp: payload.timestamp,
+        side: payload.side
+      };
+      this.setState(prev => ({
+        trades: [trade, ...prev.trades].slice(0, 200),
+        streamTrades: [trade]
+      }));
+      return;
+    }
+
     if (payload.type === 'trade' || payload.trades) {
       const incomingTrades = payload.trades || (payload.trade ? [payload.trade] : []);
       if (incomingTrades && incomingTrades.length > 0) {
@@ -847,7 +1032,7 @@ class App extends React.Component {
   render() {
     const commonLayout = (mainPanel, sidePanel1, sidePanel2) => {
       return rc('div', { className: 'app' },
-        rc(Header, { walletState: this.state, handleWalletLogin: this.handleWalletLogin }),
+        rc(Header, { walletState: this.state, handleWalletLogin: this.handleWalletLogin, handleWalletLogout: this.handleWalletLogout }),
         rc('main', { className: 'p-4' },
           rc('div', { className: 'flex flex-col lg:flex-row gap-4' },
             rc('div', { className: 'flex-grow' },
@@ -874,7 +1059,7 @@ class App extends React.Component {
     const assetsPanel = rc(AssetsPanel, { address: this.state.ethAddress });
     const toolPanel = rc(ToolPanel, null);
 
-    if (this.state.screenWidth < 960) { // Mobile layout
+    if (this.state.screenWidth < 960) {
       return commonLayout(
         rc('div', { className: 'space-y-4' }, mainContent, orderPanelWithSigner, marketPanel, assetsPanel, toolPanel),
         null,
@@ -882,7 +1067,7 @@ class App extends React.Component {
       );
     }
 
-    if (this.state.screenWidth < 1400) { // Tablet layout
+    if (this.state.screenWidth < 1400) {
       return commonLayout(
         mainContent,
         rc('div', { className: 'space-y-4' }, orderPanelWithSigner, marketPanel),
@@ -890,9 +1075,8 @@ class App extends React.Component {
       );
     }
 
-    // Desktop layout
     return rc('div', { className: 'app' },
-      rc(Header, { walletState: this.state, handleWalletLogin: this.handleWalletLogin }),
+      rc(Header, { walletState: this.state, handleWalletLogin: this.handleWalletLogin, handleWalletLogout: this.handleWalletLogout }),
       rc('main', { className: 'p-4' },
         rc('div', { className: 'flex gap-4' },
           rc('div', { className: 'flex-grow space-y-4' },
