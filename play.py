@@ -12,6 +12,7 @@ except:
 import json
 import tornado.web
 import tornado.ioloop
+import tornado.websocket
 
 try:
     from eth_utils import keccak
@@ -28,7 +29,18 @@ func.load_all_zips()
 GLOBAL_FUNCTIONS = func.namespace
 
 
-class GetLatestStateAPIHandler(tornado.web.RequestHandler):
+class BaseHandler(tornado.web.RequestHandler):
+    def set_default_headers(self):
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.set_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def options(self):
+        self.set_status(204)
+        self.finish()
+
+
+class GetLatestStateAPIHandler(BaseHandler):
     def get(self):
         from urllib.parse import unquote
         prefix = unquote(self.get_argument('prefix'))
@@ -53,13 +65,13 @@ class GetLatestStateAPIHandler(tornado.web.RequestHandler):
         print('value:', value, 'owner:', owner)
         self.finish({'result': value, 'owner': owner})
 
-class QueryRecentStateAPIHandler(tornado.web.RequestHandler):
+class QueryRecentStateAPIHandler(BaseHandler):
     def get(self):
         prefix = self.get_argument('prefix')
         print(prefix)
 
 
-class OrderbookAPIHandler(tornado.web.RequestHandler):
+class OrderbookAPIHandler(BaseHandler):
     def get(self):
         base = self.get_argument('base')
         quote = self.get_argument('quote')
@@ -106,65 +118,85 @@ class OrderbookAPIHandler(tornado.web.RequestHandler):
         self.finish({'buys': buys, 'sells': sells, 'pair': pair})
 
 
-class HistoryAPIHandler(tornado.web.RequestHandler):
+class HistoryAPIHandler(BaseHandler):
     def get(self):
         base = self.get_argument('base')
         quote = self.get_argument('quote')
+        interval = self.get_argument('interval', '1s')
         pair = f'{base}_{quote}'
 
-        start_block = int(self.get_argument('start_block', 0))
-        end_block = int(self.get_argument('end_block', space.latest_block_number))
+        interval_seconds = {
+            '1s': 1, '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400
+        }
+        if interval not in interval_seconds:
+            interval = '1s'
+        interval_sec = interval_seconds[interval]
 
-        candle_map = {}
-        for block_num in range(start_block, end_block + 1):
-            block_events = space.events.get(block_num, [])
+        # Collect per-block candles from trade events
+        block_candles = []
+        for block_num in sorted(space.events.keys()):
+            block_events = space.events[block_num]
             for evt in block_events:
                 if evt['event'] in ('TradeLimitTake', 'TradeMarketTake') and pair in evt['args']:
                     price = int(evt['args'][4])
                     if price == 0:
                         continue
                     base_amount = int(evt['args'][3])
-                    usdc_amount = base_amount * price // (10 ** 6)
+                    blk_time = space.block_times.get(block_num, block_num)
+                    block_candles.append({
+                        'time': blk_time,
+                        'price': price,
+                        'amount': base_amount,
+                    })
+                    break  # one trade event per block is enough for OHLC
 
-                    if block_num not in candle_map:
-                        candle_map[block_num] = {
-                            'time': block_num,
-                            'block': block_num,
-                            'open': 0,
-                            'high': 0,
-                            'low': 0,
-                            'close': 0,
-                            'volume': 0,
-                        }
-                    c = candle_map[block_num]
-                    if c['open'] == 0:
-                        c['open'] = price
-                        c['high'] = price
-                        c['low'] = price
-                    c['close'] = price
-                    c['high'] = max(c['high'], price)
-                    c['low'] = min(c['low'], price)
-                    c['volume'] += usdc_amount
+        # Bucket into time intervals
+        buckets = {}
+        for c in block_candles:
+            bucket = (c['time'] // interval_sec) * interval_sec
+            if bucket not in buckets:
+                buckets[bucket] = {
+                    'time': bucket,
+                    'open': c['price'],
+                    'high': c['price'],
+                    'low': c['price'],
+                    'close': c['price'],
+                    'volume': c['amount'],
+                }
+            else:
+                b = buckets[bucket]
+                b['high'] = max(b['high'], c['price'])
+                b['low'] = min(b['low'], c['price'])
+                b['close'] = c['price']
+                b['volume'] += c['amount']
 
-        candles = list(candle_map.values())
-        for i, c in enumerate(candles):
+        candles = list(buckets.values())
+        candles.sort(key=lambda x: x['time'])
+
+        # Divide prices by quote decimal (10^6)
+        for c in candles:
             c['open'] = c['open'] / (10 ** 6)
             c['high'] = c['high'] / (10 ** 6)
             c['low'] = c['low'] / (10 ** 6)
             c['close'] = c['close'] / (10 ** 6)
 
-        candles.sort(key=lambda x: x['time'])
-
-        self.finish({
-            'candles': candles,
-            'pair': pair,
-            'start_block': start_block,
-            'end_block': end_block,
-            'latest_block': space.latest_block_number
-        })
+        self.finish({'candles': candles, 'pair': pair, 'latest_block': space.latest_block_number})
 
 
-class EventsAPIHandler(tornado.web.RequestHandler):
+class WSHandler(tornado.websocket.WebSocketHandler):
+    def open(self):
+        space.connected_clients.add(self)
+        print(f'WS client connected, total: {len(space.connected_clients)}')
+
+    def on_close(self):
+        space.connected_clients.discard(self)
+        print(f'WS client disconnected, total: {len(space.connected_clients)}')
+
+    def check_origin(self, origin):
+        return True
+
+
+class EventsAPIHandler(BaseHandler):
     def get(self):
         self.set_header("Access-Control-Allow-Origin", "*")
         self.set_header("Access-Control-Allow-Headers", "x-requested-with")
@@ -408,6 +440,7 @@ def start_server():
         (r'/api/orderbook', OrderbookAPIHandler),
         (r'/api/history', HistoryAPIHandler),
         (r'/api/events', EventsAPIHandler),
+        (r'/ws', WSHandler),
     ], template_path="templates")
     app.listen(8545)
     tornado.ioloop.IOLoop.current().start()

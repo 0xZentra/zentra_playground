@@ -23,6 +23,7 @@ import rlp
 
 import space
 import func
+from space import broadcast
 
 CHAIN_ID = 31337
 REVERSED_NO = 10**16
@@ -326,9 +327,44 @@ class RPCHandler(tornado.web.RequestHandler):
                 'nonce': tx_nonce,
                 'tx': tx_list
             }
-            
+
             space.nonces[tx_from] = count + 1
-            # No automatic nextblock - user must call it manually or via timer
+
+            try:
+                data_bytes = binascii.unhexlify(data)
+                data_json = json.loads(data_bytes.decode('utf-8'))
+                print('parsed_json', data_json)
+                func.set_sender(tx_from)
+                func.namespace[data_json['f']](*data_json['a'])
+                print('=== function executed, events now:', len(space.events), '===')
+
+                # Broadcast trade events via WS
+                if data_json.get('f') in ['trade_limit_order', 'trade_market_order']:
+                    blk_num = space.latest_block_number
+                    if blk_num in space.events:
+                        for evt in space.events[blk_num]:
+                            if evt['event'] in ['TradeLimitTake', 'TradeMarketTake']:
+                                evt_args = evt['args']
+                                if len(evt_args) >= 5:
+                                    pair = evt_args[0]
+                                    parts = pair.split('_')
+                                    if len(parts) == 2:
+                                        base, quote = parts
+                                        trade_msg = json.dumps({
+                                            'type': 'trade',
+                                            'timestamp': space.block_times.get(blk_num, int(__import__('time').time())),
+                                            'price': evt_args[4] / (10**6),
+                                            'amount': evt_args[3] / (10**18),
+                                            'side': evt_args[1],
+                                            'pair': pair
+                                        })
+                                        broadcast(trade_msg)
+                                break
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print('failed to execute function:', e)
+
             resp = {'jsonrpc':'2.0', 'result': '%s' % tx_hash.hex(), 'id': rpc_id}
 
         elif req.get('method') == 'eth_sendRawTransaction':
@@ -395,6 +431,27 @@ class RPCHandler(tornado.web.RequestHandler):
                 func.set_sender(tx_from)
                 func.namespace[data_json['f']](*data_json['a'])
                 print('=== function executed, events now:', len(space.events), '===')
+
+                if data_json.get('f') in ['trade_limit_order', 'trade_market_order']:
+                    blk_num = space.latest_block_number
+                    if blk_num in space.events:
+                        for evt in space.events[blk_num]:
+                            if evt['event'] in ['TradeLimitTake', 'TradeMarketTake']:
+                                evt_args = evt['args']
+                                if len(evt_args) >= 5:
+                                    pair = evt_args[0]
+                                    parts = pair.split('_')
+                                    if len(parts) == 2:
+                                        trade_msg = json.dumps({
+                                            'type': 'trade',
+                                            'timestamp': space.block_times.get(blk_num, int(__import__('time').time())),
+                                            'price': evt_args[4] / (10**6),
+                                            'amount': evt_args[3] / (10**18),
+                                            'side': evt_args[1],
+                                            'pair': pair
+                                        })
+                                        broadcast(trade_msg)
+                                break
             except Exception as e:
                 import traceback
                 traceback.print_exc()

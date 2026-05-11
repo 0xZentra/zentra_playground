@@ -5,6 +5,7 @@ latest_block_number = 0
 states = {}  # block_number -> {key: (addr, value)}
 blocks = {}  # block_number -> [tx_hashes]
 block_hashes = {}  # block_number -> block_hash
+block_times = {}  # block_number -> unix timestamp (seconds)
 transactions = {}  # tx_hash -> tx
 events = {}  # block_number -> [{event, args}, ...]
 nonces = {}  # addr -> nonce
@@ -13,6 +14,9 @@ sender = None
 
 block_mode = 0  # 0: manual, 1: auto after tx, >=2: auto with interval (seconds)
 block_timer = None
+
+# WebSocket clients for real-time push
+connected_clients = set()
 
 
 def _gen_block_hash():
@@ -30,11 +34,6 @@ def _init_block_mode():
         interval_ms = block_mode * 1000
         block_timer = tornado.ioloop.PeriodicCallback(nextblock, interval_ms)
         block_timer.start()
-    # 初始化第一个 block
-    # if latest_block_number == 0:
-    #     block_hash = _gen_block_hash()
-    #     blocks[latest_block_number] = []
-    #     block_hashes[latest_block_number] = block_hash
 
 def put(_owner, _asset, _var, _value, _key = None):
     global sender
@@ -83,15 +82,32 @@ def event(_event, _args):
 def handle_lookup(_addr):
     return _addr
 
-def nextblock():
+def nextblock(timestamp=None):
     global states
     global latest_block_number
-    global blocks, block_hashes
+    global blocks, block_hashes, block_times
 
     block_hash = _gen_block_hash()
-    # blocks[latest_block_number] = []
     block_hashes[latest_block_number] = block_hash
+
+    if timestamp is None:
+        import time
+        timestamp = int(time.time())
+    block_times[latest_block_number] = timestamp
 
     latest_block_number += 1
     states[latest_block_number] = {}
+
+
+def broadcast(message):
+    """Push message to all connected WS clients"""
+    to_remove = set()
+    for client in connected_clients:
+        try:
+            client.write_message(message)
+        except Exception as e:
+            print(f"Broadcast error: {e}")
+            to_remove.add(client)
+    for c in to_remove:
+        connected_clients.discard(c)
 
