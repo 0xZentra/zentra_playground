@@ -858,6 +858,7 @@ class App extends React.Component {
     };
     this.ws = null;
     this.reconnectTimeout = null;
+    this.obFetchTimeout = null;
   }
 
   componentDidMount() {
@@ -875,6 +876,10 @@ class App extends React.Component {
   componentWillUnmount() {
     window.removeEventListener('resize', this.handleResize);
     this.teardownStream();
+    if (this.obFetchTimeout) {
+      clearTimeout(this.obFetchTimeout);
+      this.obFetchTimeout = null;
+    }
     if (window.ethereum && window.ethereum.removeListener) {
       window.ethereum.removeListener('accountsChanged', this.initializeWallet);
     }
@@ -882,17 +887,23 @@ class App extends React.Component {
 
   loadInitialMarketData = async () => {
     try {
-      const response = await fetch(`${TESTNET_INDEXER_URL}/api/orderbook?base=${BASE_TOKEN}&quote=${QUOTE_TOKEN}`);
-      const data = await response.json();
-      this.setState(
-        {
-          orderbook: { buys: data.buys, sells: data.sells },
-          lastBlock: null
-        },
-        () => this.startStream()
-      );
+      await this.fetchOrderbook();
+      this.startStream();
     } catch (error) {
       console.error('Failed to load market data:', error);
+    }
+  }
+
+  fetchOrderbook = async () => {
+    try {
+      const response = await fetch(`${TESTNET_INDEXER_URL}/api/orderbook?base=${BASE_TOKEN}&quote=${QUOTE_TOKEN}`);
+      const data = await response.json();
+      this.setState({
+        orderbook: { buys: data.buys, sells: data.sells },
+        lastBlock: null
+      });
+    } catch (error) {
+      console.error('Failed to fetch orderbook:', error);
     }
   }
 
@@ -993,6 +1004,10 @@ class App extends React.Component {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
+    if (this.obFetchTimeout) {
+      clearTimeout(this.obFetchTimeout);
+      this.obFetchTimeout = null;
+    }
     if (!this.ws) return;
     this.ws.onopen = null;
     this.ws.onclose = null;
@@ -1042,6 +1057,7 @@ class App extends React.Component {
         trades: [trade, ...prev.trades].slice(0, 200),
         streamTrades: [trade]
       }));
+      this.debouncedFetchOrderbook();
       return;
     }
 
@@ -1056,7 +1072,16 @@ class App extends React.Component {
       if (payload.last_block) {
         this.setState({ lastBlock: payload.last_block });
       }
+      this.debouncedFetchOrderbook();
     }
+  }
+
+  debouncedFetchOrderbook = () => {
+    if (this.obFetchTimeout) clearTimeout(this.obFetchTimeout);
+    this.obFetchTimeout = setTimeout(() => {
+      this.obFetchTimeout = null;
+      this.fetchOrderbook();
+    }, 300);
   }
 
   render() {
