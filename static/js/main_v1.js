@@ -1,6 +1,18 @@
 import { ethers } from "https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.2/ethers.min.js";
 
 let rc = React.createElement;
+
+const showToast = (message, type = 'info') => {
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('toast-visible'));
+  setTimeout(() => {
+    toast.classList.remove('toast-visible');
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+};
 const LightweightCharts = window.LightweightCharts;
 const TESTNET_INDEXER_URL = 'http://127.0.0.1:8545';
 const BASE_TOKEN = 'BTC';
@@ -570,7 +582,7 @@ class OrderPanel extends React.Component {
   placeOrder = async () => {
     const { signer } = this.props;
     if (!signer) {
-      alert('Please connect your wallet first.');
+      showToast('Please connect your wallet first.', 'error');
       return;
     }
 
@@ -587,7 +599,7 @@ class OrderPanel extends React.Component {
 
     if (activeTab === 'Limit') {
       if (!size || isNaN(parseFloat(size)) || parseFloat(price) <= 0) {
-        alert('Please enter a valid size and price');
+        showToast('Please enter a valid size and price', 'error');
         return;
       }
       if (sizeUnit === for_token) {
@@ -612,7 +624,7 @@ class OrderPanel extends React.Component {
 
     } else {
       if (!size || isNaN(parseFloat(size)) || parseFloat(size) <= 0) {
-        alert('Please enter a valid size');
+        showToast('Please enter a valid size', 'error');
         return;
       }
       if (tradeType === 'Buy') {
@@ -647,16 +659,16 @@ class OrderPanel extends React.Component {
         value: 0,
         data: ethers.hexlify(new TextEncoder().encode(JSON.stringify(calldata)))
       });
-      alert(`Transaction sent: ${tx.hash}`);
+      showToast(`Transaction sent: ${tx.hash}`, 'success');
     } catch (error) {
       console.error('Order failed:', error);
-      alert('Order failed.');
+      showToast('Order failed.', 'error');
     }
   };
 
   render() {
     const tradeTypeClass = this.state.tradeType === 'Buy' ? 'bg-green-500 hover:bg-green-700' : 'bg-red-500 hover:bg-red-700';
-    const balanceToShow = this.state.tradeType === 'Buy' ? `${this.state.balance.USDC.toFixed(2)} USDC` : `${(this.state.balance.BTC || 0).toFixed(4)} BTC`;
+    const balanceToShow = `${this.state.balance.USDC.toFixed(2)} USDC`;
     let total = 0;
     if (this.state.activeTab === 'Limit') {
       if (this.state.price > 0 && this.state.size > 0) {
@@ -683,6 +695,10 @@ class OrderPanel extends React.Component {
         rc('div', { className: 'flex justify-between text-sm' },
           rc('span', { className: 'text-gray-400' }, 'Available:'),
           rc('span', { className: 'font-mono' }, balanceToShow)
+        ),
+        rc('div', { className: 'flex justify-between text-sm' },
+          rc('span', { className: 'text-gray-400' }, 'Current:'),
+          rc('span', { className: 'font-mono' }, `${(this.state.balance.BTC || 0).toFixed(4)} BTC`)
         ),
         this.state.activeTab === 'Market' && rc('div', { className: 'market-tab space-y-4' },
           rc('div', null,
@@ -933,7 +949,7 @@ class App extends React.Component {
 
   handleWalletLogin = async () => {
     if (typeof window.ethereum === 'undefined') {
-      alert('Wallet not installed!');
+      showToast('Wallet not installed!', 'error');
       return;
     }
 

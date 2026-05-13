@@ -163,7 +163,55 @@
 
 body {
     background-color: #000;
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 }
+
+.text-xs { font-size: 10px !important; }
+.text-sm { font-size: 11px !important; }
+.text-base { font-size: 12px !important; }
+.text-lg { font-size: 13px !important; }
+.text-xl { font-size: 14px !important; }
+.text-2xl { font-size: 16px !important; }
+
+.order-panel .p-4 { padding: 10px !important; }
+.market-panel .p-4 { padding: 10px !important; }
+.chart-panel .p-4 { padding: 10px !important; }
+.assets-panel .p-4 { padding: 10px !important; }
+.info-panel .p-4 { padding: 10px !important; }
+.tool-panel .p-4 { padding: 10px !important; }
+
+.order-panel .mt-4 { margin-top: 8px !important; }
+.order-panel .space-y-4 > :not([hidden]) ~ :not([hidden]) { margin-top: 8px !important; }
+.order-panel .gap-2 { gap: 4px !important; }
+.market-panel .mt-4 { margin-top: 8px !important; }
+
+.py-2 { padding-top: 4px !important; padding-bottom: 4px !important; }
+.px-4 { padding-left: 10px !important; padding-right: 10px !important; }
+.p-2 { padding: 4px 8px !important; }
+.p-1 { padding: 2px 6px !important; }
+.mb-4 { margin-bottom: 8px !important; }
+.mb-2 { margin-bottom: 4px !important; }
+.gap-4 { gap: 8px !important; }
+.gap-1 { gap: 2px !important; }
+
+button, .font-bold { font-weight: 600 !important; }
+
+.chart-panel .mb-2 { margin-bottom: 4px !important; }
+
+.header { padding: 6px 16px !important; }
+.header .logo img { height: 20px !important; width: 20px !important; }
+.header .logo .mr-2 { margin-right: 4px !important; }
+.header .login button { font-size: 11px !important; padding: 3px 10px !important; }
+header button.bg-gray-200 { font-size: 11px !important; }
+
+input, .font-mono { font-size: 11px !important; }
+.order-panel input[type=text] { font-size: 11px !important; padding: 4px 8px !important; }
+
+.order-panel .range input[type=range] { width: 140px !important; }
+
+.order-panel .switch-control { margin: 2px 60px !important; padding: 1px !important; }
+.order-panel .switch-control button { padding: 4px 12px !important; font-size: 11px !important; }
 
 #starry-sky {
     position: fixed;
@@ -173,4 +221,35 @@ body {
     height: 100%;
     z-index: -1;
     display: block;
+}
+
+.toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    padding: 12px 24px;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 14px;
+    z-index: 9999;
+    opacity: 0;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    pointer-events: none;
+    max-width: 90vw;
+    text-align: center;
+    word-break: break-all;
+}
+.toast-visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+.toast-success {
+    background: #16a34a;
+}
+.toast-error {
+    background: #dc2626;
+}
+.toast-info {
+    background: #2563eb;
 }
