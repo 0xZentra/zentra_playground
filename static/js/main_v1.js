@@ -41,16 +41,10 @@ class Header extends React.Component {
     const { ethAddress, walletLoading } = this.props.walletState;
     return rc('header', { className: 'header p-4 flex items-center bg-gray-800 text-white' },
       rc('div', { className: 'logo flex items-center' },
-        rc('img', { src: 'logo.svg', alt: 'Logo', className: 'h-8 w-8 mr-2' }),
+        // rc('img', { src: 'logo.svg', alt: 'Logo', className: 'h-8 w-8 mr-2' }),
         rc('span', { className: 'text-xl font-bold' }, 'OrderBook')
       ),
-      rc('nav', { className: 'menu' },
-        rc('ul', { className: 'flex space-x-4' },
-          rc('li', null, rc('a', { href: '#', className: 'hover:text-gray-400' }, 'Home')),
-          rc('li', null, rc('a', { href: '#', className: 'hover:text-gray-400' }, 'About')),
-          rc('li', null, rc('a', { href: '#', className: 'hover:text-gray-400' }, 'Contact'))
-        )
-      ),
+      rc('span', { className: 'text-xs text-gray-400 ml-4 px-2 py-0.5 border border-gray-600 rounded' }, 'Zentra Testnet3'),
       rc('div', { className: 'login ml-auto flex items-center gap-2' },
         walletLoading ?
           null :
@@ -143,26 +137,43 @@ class ChartPanel extends React.Component {
       const response = await fetch(`${TESTNET_INDEXER_URL}/api/history?base=${BASE_TOKEN}&quote=${QUOTE_TOKEN}&interval=${interval}`);
       const data = await response.json();
       const candles = data.candles || [];
+      const lastTrade = data.last_trade_before_start || null;
 
-      if (candles.length > 0) {
-        const intervalSec = {
-          '1s': 1, '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400
-        }[interval] || 3600;
-        const now = Math.floor(Date.now() / 1000);
-        const currentBucket = Math.floor(now / intervalSec) * intervalSec;
-        const filled = [candles[0]];
-        for (let i = 1; i < candles.length; i++) {
-          const prev = filled[filled.length - 1];
-          const curr = candles[i];
-          for (let t = prev.time + intervalSec; t < curr.time; t += intervalSec) {
-            filled.push({
-              time: t, open: prev.close, high: prev.close,
-              low: prev.close, close: prev.close, volume: 0, is_filled: true
-            });
-          }
-          curr.open = prev.close;
-          filled.push(curr);
+      const intervalSec = {
+        '1s': 1, '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400
+      }[interval] || 3600;
+      const now = Math.floor(Date.now() / 1000);
+      const currentBucket = Math.floor(now / intervalSec) * intervalSec;
+
+      if (lastTrade) {
+        if (candles.length === 0) {
+          candles.push({
+            time: Math.floor(lastTrade.time / intervalSec) * intervalSec,
+            open: parseFloat(lastTrade.price),
+            high: parseFloat(lastTrade.price),
+            low: parseFloat(lastTrade.price),
+            close: parseFloat(lastTrade.price),
+            volume: 0,
+          });
+        } else {
+          candles[0].open = parseFloat(lastTrade.price);
         }
+      }
+
+      const filled = candles.length ? [candles[0]] : [];
+      for (let i = 1; i < candles.length; i++) {
+        const prev = filled[filled.length - 1];
+        const curr = candles[i];
+        for (let t = prev.time + intervalSec; t < curr.time; t += intervalSec) {
+          filled.push({
+            time: t, open: prev.close, high: prev.close,
+            low: prev.close, close: prev.close, volume: 0, is_filled: true
+          });
+        }
+        curr.open = prev.close;
+        filled.push(curr);
+      }
+      if (filled.length) {
         let last = filled[filled.length - 1];
         for (let t = last.time + intervalSec; t <= currentBucket; t += intervalSec) {
           filled.push({
@@ -171,13 +182,14 @@ class ChartPanel extends React.Component {
           });
           last = filled[filled.length - 1];
         }
-        if (this.candleSeries) {
-          this.candleSeries.setData(filled);
-        }
-        this.setState({ history: candles, localCandles: filled });
-      } else {
-        this.setState({ history: candles, localCandles: candles });
       }
+      const MAX_CANDLES = { '1s': 300, '1m': 300, '5m': 300, '15m': 300, '1h': 200, '1d': 100 }[interval] || 300;
+      const trimmed = filled.length > MAX_CANDLES ? filled.slice(-MAX_CANDLES) : filled;
+      if (this.candleSeries) {
+        // console.log(trimmed);
+        this.candleSeries.setData(trimmed);
+      }
+      this.setState({ history: candles, localCandles: trimmed });
     } catch (error) {
       console.error('Failed to load history:', error);
     }
@@ -252,7 +264,7 @@ class ChartPanel extends React.Component {
           volume: (oldC.volume || 0) + (trade.amount || 0),
           is_filled: false
         };
-        updatedIdx = foundIdx;
+        updatedIdx = updatedIdx < 0 ? foundIdx : Math.min(updatedIdx, foundIdx);
 
       } else if (bucket > localCandles[localCandles.length - 1].time) {
         const newC = {
@@ -265,7 +277,7 @@ class ChartPanel extends React.Component {
           is_filled: false
         };
         localCandles = [...localCandles, newC];
-        updatedIdx = localCandles.length - 1;
+        updatedIdx = updatedIdx < 0 ? localCandles.length - 1 : Math.min(updatedIdx, localCandles.length - 1);
 
       } else if (bucket < localCandles[0].time) {
         const newC = {
@@ -302,31 +314,32 @@ class ChartPanel extends React.Component {
           newC,
           ...localCandles.slice(insertIdx)
         ];
-        updatedIdx = insertIdx;
+        updatedIdx = updatedIdx < 0 ? insertIdx : Math.min(updatedIdx, insertIdx);
       }
     }
 
-    if (localCandles.length > MAX_CANDLES) {
-      localCandles = localCandles.slice(-MAX_CANDLES);
+    // if (localCandles.length > MAX_CANDLES) {
+    //   localCandles = localCandles.slice(-MAX_CANDLES);
+    // }
+
+    if (updatedIdx >= 0 && updatedIdx < localCandles.length) {
+      let lastClose = localCandles[updatedIdx].close;
+      for (let i = updatedIdx + 1; i < localCandles.length; i++) {
+        if (localCandles[i].is_filled === true) {
+          localCandles[i].open = lastClose;
+          localCandles[i].close = lastClose;
+          localCandles[i].high = lastClose;
+          localCandles[i].low = lastClose;
+        } else if (localCandles[i].is_filled === false) {
+          lastClose = localCandles[i].close;
+        }
+      }
     }
 
     if (localCandles.length > 1) {
       for (let i = 1; i < localCandles.length; i++) {
+        if (updatedIdx >= 0 && i > updatedIdx && localCandles[i].is_filled === true) continue;
         localCandles[i].open = localCandles[i-1].close;
-      }
-    }
-
-    if (updatedIdx >= 0) {
-      for (let i = updatedIdx + 1; i < localCandles.length; i++) {
-        if (localCandles[i].is_filled) {
-          localCandles[i].open = localCandles[i-1].close;
-          localCandles[i].close = localCandles[i-1].close;
-          localCandles[i].high = localCandles[i-1].close;
-          localCandles[i].low = localCandles[i-1].close;
-        }
-        if (!localCandles[i].is_filled) {
-          break;
-        }
       }
     }
 
@@ -465,7 +478,7 @@ class OrderPanel extends React.Component {
   constructor(props) {
     super(props);
     this.state = {
-      activeTab: 'Limit',
+      activeTab: localStorage.getItem('orderbook_activeTab') || 'Limit',
       tradeType: 'Buy',
       price: '68000',
       size: '',
@@ -481,7 +494,7 @@ class OrderPanel extends React.Component {
 
   componentDidMount() {
     this.fetchBalances();
-    this.balanceInterval = setInterval(this.fetchBalances, 2000);
+    // this.balanceInterval = setInterval(this.fetchBalances, 2000);
   }
 
   componentWillUnmount() {
@@ -507,7 +520,7 @@ class OrderPanel extends React.Component {
     tokens.forEach(async (token) => {
       if (!token || !decimals[token]) return;
       try {
-        const prefix = `${token}-balance:${address.toLowerCase()}`;
+        const prefix = `base-${token}-balance:${address.toLowerCase()}`;
         const response = await fetch(`${TESTNET_INDEXER_URL}/api/get_latest_state?prefix=${prefix}`);
         const data_json = await response.text();
         const data = parseJsonWithBigInt(data_json);
@@ -568,6 +581,7 @@ class OrderPanel extends React.Component {
 
   handleTabChange = (tab) => {
     this.setState({ activeTab: tab });
+    localStorage.setItem('orderbook_activeTab', tab);
   };
 
   handleTradeTypeChange = (type) => {
@@ -682,7 +696,7 @@ class OrderPanel extends React.Component {
       total = parseFloat(this.state.size) || 0;
     }
 
-    return rc('div', { className: 'order-panel bg-gray-900 p-4 rounded-lg text-white', style: { minWidth: '300px', height: '100%' } },
+    return rc('div', { className: 'order-panel bg-gray-900 p-4 rounded-lg text-white', style: { minWidth: '300px' } },
       rc('div', { className: 'flex border-b border-gray-700' },
         rc('button', { className: `px-4 py-2 ${this.state.activeTab === 'Market' ? 'border-b-2 border-blue-500' : ''}`, onClick: () => this.handleTabChange('Market') }, 'Market'),
         rc('button', { className: `px-4 py-2 ${this.state.activeTab === 'Limit' ? 'border-b-2 border-blue-500' : ''}`, onClick: () => this.handleTabChange('Limit') }, 'Limit')
@@ -798,7 +812,7 @@ class AssetsPanel extends React.Component {
     const addr = this.props.address.toLowerCase();
     for (const [tick, dec] of Object.entries(tokens)) {
       try {
-        const prefix = `${tick}-balance:${addr}`;
+        const prefix = `base-${tick}-balance:${addr}`;
         const response = await fetch(`${TESTNET_INDEXER_URL}/api/get_latest_state?prefix=${prefix}`);
         const data = await response.json();
         const val = data.result;
@@ -1119,20 +1133,20 @@ class App extends React.Component {
     };
 
     const mainContent = rc('div', { className: 'space-y-4' },
+      rc(InfoPanel, null),
       rc(ChartPanel, {
         streamTrades: this.state.streamTrades,
-      }),
-      rc(InfoPanel, null)
+      })
     );
 
     const orderPanelWithSigner = rc(OrderPanel, { signer: this.state.signer });
     const marketPanel = rc(MarketPanel, { orderbook: this.state.orderbook, trades: this.state.trades });
     const assetsPanel = rc(AssetsPanel, { address: this.state.ethAddress });
-    const toolPanel = rc(ToolPanel, null);
+    // const toolPanel = rc(ToolPanel, null);
 
     if (this.state.screenWidth < 960) {
       return commonLayout(
-        rc('div', { className: 'space-y-4' }, mainContent, orderPanelWithSigner, marketPanel, assetsPanel, toolPanel),
+        rc('div', { className: 'space-y-4' }, mainContent, orderPanelWithSigner, marketPanel, assetsPanel/*, toolPanel*/),
         null,
         null
       );
@@ -1140,9 +1154,9 @@ class App extends React.Component {
 
     if (this.state.screenWidth < 1400) {
       return commonLayout(
-        mainContent,
+        rc('div', { className: 'space-y-4' }, mainContent, assetsPanel),
         rc('div', { className: 'space-y-4' }, orderPanelWithSigner, marketPanel),
-        rc('div', { className: 'space-y-4' }, assetsPanel, toolPanel)
+        null
       );
     }
 
@@ -1158,8 +1172,8 @@ class App extends React.Component {
             rc(AssetsPanel, { address: this.state.ethAddress })
           ),
           rc('div', { className: 'w-80 space-y-4' },
-            marketPanel,
-            rc(ToolPanel, null)
+            marketPanel
+            // rc(ToolPanel, null)
           ),
           rc('div', { className: 'w-80 space-y-4' },
             orderPanelWithSigner

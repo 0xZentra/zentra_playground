@@ -17,7 +17,7 @@ def get_balance(account_index):
     balances = {}
 
     for token, decimals in tokens.items():
-        resp = requests.get(f'{PROVIDER_HOST}/api/get_latest_state?prefix={token}-balance:{addr}')
+        resp = requests.get(f'{PROVIDER_HOST}/api/get_latest_state?prefix=base-{token}-balance:{addr}')
         data = resp.json()
         balance = data.get('result', '0')
         if balance and balance != '0':

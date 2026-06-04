@@ -45,7 +45,10 @@ class GetLatestStateAPIHandler(BaseHandler):
         from urllib.parse import unquote
         prefix = unquote(self.get_argument('prefix'))
         print('get_latest_state:', prefix)
-        
+
+        if prefix.startswith('base-'):
+            prefix = prefix[5:]
+
         # format: asset-var:key (e.g., BTC-balance:0xabc...)
         if '-' not in prefix:
             self.finish({'result': None})
@@ -73,16 +76,16 @@ class QueryRecentStateAPIHandler(BaseHandler):
 
 class OrderbookAPIHandler(BaseHandler):
     def get(self):
-        base = self.get_argument('base')
-        quote = self.get_argument('quote')
+        base = self.get_argument('base').upper()
+        quote = self.get_argument('quote').upper()
         pair = f'{base}_{quote}'
-        
+
         buys = []
         sells = []
-        
+
         buy_start, _ = space.get('trade', f'{pair}_buy_start', 1)
         sell_start, _ = space.get('trade', f'{pair}_sell_start', 1)
-        
+
         buy_id = buy_start
         while buy_id:
             buy, _ = space.get('trade', f'{pair}_buy', None, str(buy_id))
@@ -98,7 +101,7 @@ class OrderbookAPIHandler(BaseHandler):
                 buy_id = buy[4]
             else:
                 break
-        
+
         sell_id = sell_start
         while sell_id:
             sell, _ = space.get('trade', f'{pair}_sell', None, str(sell_id))
@@ -114,16 +117,16 @@ class OrderbookAPIHandler(BaseHandler):
                 sell_id = sell[4]
             else:
                 break
-        
+
         self.finish({'buys': buys, 'sells': sells, 'pair': pair})
 
 
 class HistoryAPIHandler(BaseHandler):
     def get(self):
-        base = self.get_argument('base')
-        quote = self.get_argument('quote')
+        base = self.get_argument('base').upper()
+        quote = self.get_argument('quote').upper()
         interval = self.get_argument('interval', '1s')
-        pair = f'{base}_{quote}'
+        target_pair = f'{base}_{quote}'
 
         interval_seconds = {
             '1s': 1, '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400
@@ -132,55 +135,77 @@ class HistoryAPIHandler(BaseHandler):
             interval = '1s'
         interval_sec = interval_seconds[interval]
 
-        # Collect per-block candles from trade events
-        block_candles = []
+        start_time_arg = self.get_argument('start_time', None)
+        if start_time_arg:
+            start_time = int(start_time_arg)
+        else:
+            start_time = 0
+
+        buckets = {}
+        last_trade_before_start = None
+        boundary_scanned = False
+
         for block_num in sorted(space.events.keys()):
             block_events = space.events[block_num]
-            for evt in block_events:
-                if evt['event'] in ('TradeLimitTake', 'TradeMarketTake') and pair in evt['args']:
-                    price = int(evt['args'][4])
-                    if price == 0:
-                        continue
-                    base_amount = int(evt['args'][3])
-                    blk_time = space.block_times.get(block_num, block_num)
-                    block_candles.append({
-                        'time': blk_time,
-                        'price': price,
-                        'amount': base_amount,
-                    })
-                    break  # one trade event per block is enough for OHLC
+            timestamp = space.block_times.get(block_num, block_num)
 
-        # Bucket into time intervals
-        buckets = {}
-        for c in block_candles:
-            bucket = (c['time'] // interval_sec) * interval_sec
-            if bucket not in buckets:
-                buckets[bucket] = {
-                    'time': bucket,
-                    'open': c['price'],
-                    'high': c['price'],
-                    'low': c['price'],
-                    'close': c['price'],
-                    'volume': c['amount'],
-                }
-            else:
-                b = buckets[bucket]
-                b['high'] = max(b['high'], c['price'])
-                b['low'] = min(b['low'], c['price'])
-                b['close'] = c['price']
-                b['volume'] += c['amount']
+            if timestamp < start_time:
+                if boundary_scanned:
+                    continue
+                boundary_scanned = True
+
+            for evt in block_events:
+                if evt['event'] not in ('TradeLimitTake', 'TradeMarketTake'):
+                    continue
+                if evt['args'][0] != target_pair:
+                    continue
+
+                price = int(evt['args'][4])
+                if price == 0:
+                    side = evt['args'][1]
+                    if len(evt['args']) > 5:
+                        order_id = evt['args'][5]
+                        order, _ = space.get('trade', f'{target_pair}_{side}', None, str(order_id))
+                        if order and len(order) >= 4:
+                            price = int(order[3])
+                if price == 0:
+                    continue
+
+                base_amount = int(evt['args'][3])
+                price_display = price / 10**6
+
+                if timestamp < start_time:
+                    last_trade_before_start = {
+                        'time': timestamp,
+                        'price': price_display,
+                        'amount': base_amount,
+                        'side': side,
+                    }
+                else:
+                    bucket = (timestamp // interval_sec) * interval_sec
+                    if bucket not in buckets:
+                        buckets[bucket] = {
+                            'time': bucket,
+                            'open': price_display,
+                            'high': price_display,
+                            'low': price_display,
+                            'close': price_display,
+                            'volume': base_amount,
+                        }
+                    else:
+                        b = buckets[bucket]
+                        b['high'] = max(b['high'], price_display)
+                        b['low'] = min(b['low'], price_display)
+                        b['close'] = price_display
+                        b['volume'] += base_amount
 
         candles = list(buckets.values())
         candles.sort(key=lambda x: x['time'])
 
-        # Divide prices by quote decimal (10^6)
-        for c in candles:
-            c['open'] = c['open'] / (10 ** 6)
-            c['high'] = c['high'] / (10 ** 6)
-            c['low'] = c['low'] / (10 ** 6)
-            c['close'] = c['close'] / (10 ** 6)
-
-        self.finish({'candles': candles, 'pair': pair, 'latest_block': space.latest_block_number})
+        result = {'candles': candles, 'pair': target_pair}
+        if last_trade_before_start:
+            result['last_trade_before_start'] = last_trade_before_start
+        self.finish(result)
 
 
 class WSHandler(tornado.websocket.WebSocketHandler):

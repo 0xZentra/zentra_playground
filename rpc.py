@@ -359,7 +359,7 @@ class RPCHandler(tornado.web.RequestHandler):
                                             'pair': pair
                                         })
                                         broadcast(trade_msg)
-                                break
+
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -451,7 +451,7 @@ class RPCHandler(tornado.web.RequestHandler):
                                             'pair': pair
                                         })
                                         broadcast(trade_msg)
-                                break
+
             except Exception as e:
                 import traceback
                 traceback.print_exc()
