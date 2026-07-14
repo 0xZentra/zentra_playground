@@ -24,17 +24,11 @@ def handle_update(info, args):
     assert args['f'] == 'handle_update'
     sender = info['sender']
     old_addr = handle_lookup(sender)
-    handle = args['a'][0]
-    assert type(handle) is str
-    assert len(handle) > 4 and len(handle) < 42
-    assert handle[0] in string.ascii_lowercase
-    assert set(handle) <= set(string.digits + string.ascii_lowercase + '_')
 
-    owner, _ = get('handle', 'handle2addr', None, handle)
-    assert owner is not None, "Handle not found"
-    assert owner == old_addr, "Not the handle owner"
+    handle, _ = get('handle', 'addr2handle', None, old_addr)
+    assert handle is not None, "No handle bound to address"
 
-    new_addr = args['a'][1].lower()
+    new_addr = args['a'][0].lower()
     assert len(new_addr) <= 42
     assert type(new_addr) is str
     if len(new_addr) == 42:
@@ -46,8 +40,8 @@ def handle_update(info, args):
     new_bound_handle, _ = get('handle', 'addr2handle', None, new_addr)
     assert new_bound_handle is None, "New address already has a handle"
 
-    put(new_addr, 'handle', 'handle2addr', new_addr, handle)
+    put(handle, 'handle', 'handle2addr', new_addr, handle)
     put(old_addr, 'handle', 'addr2handle', None, old_addr)
-    put(new_addr, 'handle', 'addr2handle', handle, new_addr)
+    put(handle, 'handle', 'addr2handle', handle, new_addr)
 
     event('HandleUpdated', [handle, old_addr, new_addr])
